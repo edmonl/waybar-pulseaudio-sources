@@ -59,66 +59,53 @@ func run(ctx context.Context) error {
 
 	pendingCycle := false
 	for {
-		client, err := pulse.NewClient()
-		if err != nil {
-			if e := output.Emit(waybarUnavailable(err)); e != nil {
-				return e
-			}
-			cycleRequested, err := waitForReconnect(ctx, userSignal)
-			if err != nil {
-				return err
-			}
-			pendingCycle = pendingCycle || cycleRequested
-			continue
-		}
-
-		changes, waitErrors, stopWatching := watchPulse(client)
-		if pendingCycle {
-			pendingCycle = false
-			if err := client.CycleDefaultSource(); err != nil {
-				if err := output.Emit(waybarError(err)); err != nil {
-					return err
-				}
-			}
-		}
-		if err := output.Emit(getWaybarOutput(client)); err != nil {
+		if err := runPulse(ctx, output, userSignal, pendingCycle); err != nil {
 			return err
 		}
 
-		reconnect := false
-		for !reconnect {
-			select {
-			case <-ctx.Done():
-				stopWatching()
-				client.Close()
-				return ctx.Err()
-			case <-changes:
-				if err := output.EmitIfChanged(getWaybarOutput(client)); err != nil {
-					return err
+		cycleRequested, err := waitForReconnect(ctx, userSignal)
+		if err != nil {
+			return err
+		}
+
+		pendingCycle = cycleRequested
+	}
+}
+
+func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Signal, pendingCycle bool) error {
+	client, err := pulse.NewClient()
+	if err != nil {
+		return output.Emit(waybarUnavailable(err))
+	}
+	defer client.Close()
+
+	changes, waitErrors, stopWatching := watchPulse(client)
+	defer stopWatching()
+
+	output.Reset()
+	for {
+		if pendingCycle {
+			if err := client.CycleDefaultSource(); err != nil {
+				if e := output.EmitIfChanged(waybarError(err)); e != nil {
+					return e
 				}
-			case err := <-waitErrors:
-				if err := output.Emit(waybarUnavailable(err)); err != nil {
-					return err
-				}
-				stopWatching()
-				client.Close()
-				cycleRequested, err := waitForReconnect(ctx, userSignal)
-				if err != nil {
-					return err
-				}
-				pendingCycle = pendingCycle || cycleRequested
-				reconnect = true
-			case <-userSignal:
-				if err := client.CycleDefaultSource(); err != nil {
-					if err := output.Emit(waybarError(err)); err != nil {
-						return err
-					}
-					continue
-				}
-				if err := output.Emit(getWaybarOutput(client)); err != nil {
-					return err
-				}
+			} else if err := output.Emit(getWaybarOutput(client)); err != nil {
+				return err
 			}
+
+			pendingCycle = false
+		} else if err := output.EmitIfChanged(getWaybarOutput(client)); err != nil {
+			return err
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-waitErrors:
+			return output.Emit(waybarUnavailable(err))
+		case <-userSignal:
+			pendingCycle = true
+		case <-changes:
 		}
 	}
 }

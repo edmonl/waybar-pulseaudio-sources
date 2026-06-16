@@ -18,6 +18,10 @@ func newJSONWriter(output io.Writer) *jsonWriter {
 	}
 }
 
+func (w *jsonWriter) Reset() {
+	w.lastLine = ""
+}
+
 func (w *jsonWriter) Emit(output any) error {
 	line, err := json.Marshal(output)
 	if err != nil {
