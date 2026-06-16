@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 )
 
 type jsonWriter struct {
@@ -12,9 +12,9 @@ type jsonWriter struct {
 	lastLine string
 }
 
-func newJSONWriter() *jsonWriter {
+func newJSONWriter(output io.Writer) *jsonWriter {
 	return &jsonWriter{
-		writer: bufio.NewWriter(os.Stdout),
+		writer: bufio.NewWriter(output),
 	}
 }
 

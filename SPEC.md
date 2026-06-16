@@ -38,25 +38,27 @@ The module text shows the default PulseAudio source volume and mute state:
 
 The tooltip shows the default source's human-readable name.
 
-The JSON output includes `text`, `tooltip`, `class`, and `percentage`.
+Source-status JSON output includes `text`, `tooltip`, `class`, and `percentage`.
 
 The `percentage` value is the unclamped PulseAudio average channel volume percentage. It may exceed 100.
 
-If PulseAudio is unavailable, the program emits unavailable status and retries connection after a long delay. The delay should avoid tight reconnect loops because PulseAudio is usually not restored immediately. A click while unavailable sends `SIGUSR1` and triggers an immediate reconnect attempt.
+If PulseAudio is unavailable, the program emits unavailable status and retries connection after a long delay. The delay should avoid tight reconnect loops because PulseAudio is usually not restored immediately.
+
+`SIGUSR1` always represents a source cycling request. If PulseAudio is unavailable when the signal is received, the program records the pending cycling request, retries connection immediately, and applies the cycle after reconnecting.
 
 ```json
-{"text":"","tooltip":"PulseAudio unavailable: ...","class":"unavailable",...}
+{"text":"Unavailable ","tooltip":"...","class":"unavailable"}
 ```
 
 Operation failures that are not availability failures use error status:
 
 ```json
-{"text":"error ","tooltip":"...","class":"error",...}
+{"text":"Error ","tooltip":"...","class":"error"}
 ```
 
 # Source Switching
 
-On `SIGUSR1`, the program selects the next available PulseAudio source and sets it as the default source.
+On `SIGUSR1`, the program selects the next available PulseAudio source and sets it as the default source. Reconnection is a prerequisite for this operation when PulseAudio is unavailable.
 
 Sources whose PulseAudio name ends with `.monitor` are excluded from display and source switching.
 

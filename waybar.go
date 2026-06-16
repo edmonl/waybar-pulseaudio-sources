@@ -2,6 +2,8 @@ package main
 
 import (
 	"strconv"
+
+	"github.com/edmonl/waybar-pulseaudio-sources/pulse"
 )
 
 const (
@@ -13,10 +15,10 @@ type waybarOutput struct {
 	Text       string `json:"text"`
 	Tooltip    string `json:"tooltip,omitempty"`
 	Class      string `json:"class,omitempty"`
-	Percentage int    `json:"percentage"`
+	Percentage *int   `json:"percentage,omitempty"`
 }
 
-func waybarState(source *Source) waybarOutput {
+func waybarState(source *pulse.Source) waybarOutput {
 	icon := microphoneIcon
 	class := "source"
 	if source.Muted {
@@ -24,11 +26,12 @@ func waybarState(source *Source) waybarOutput {
 		class = "muted"
 	}
 
+	percentage := source.Volume
 	return waybarOutput{
 		Text:       strconv.Itoa(source.Volume) + "% " + icon,
 		Tooltip:    source.Description,
 		Class:      class,
-		Percentage: source.Volume,
+		Percentage: &percentage,
 	}
 }
 
