@@ -508,7 +508,7 @@ static void pulse_subscribe_cb(pa_context *context,
   (void)index;
 
   pulse_client_t *client = (pulse_client_t *)userdata;
-  client->event_generation++;
+  ++client->event_generation;
   pa_threaded_mainloop_signal(client->mainloop, 0);
 }
 
