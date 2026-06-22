@@ -25,7 +25,7 @@ static bool pulse_error_failed(pulse_error_t error) {
 struct pulse_client {
   pa_threaded_mainloop *mainloop;
   pa_context *context;
-  uint64_t event_generation;
+  bool event_pending;
   bool mainloop_started;
 };
 
@@ -508,7 +508,7 @@ static void pulse_subscribe_cb(pa_context *context,
   (void)index;
 
   pulse_client_t *client = (pulse_client_t *)userdata;
-  ++client->event_generation;
+  client->event_pending = true;
   pa_threaded_mainloop_signal(client->mainloop, 0);
 }
 
@@ -554,9 +554,9 @@ pulse_error_t pulse_wait_for_change(pulse_client_t *client) {
     return error;
   }
 
-  uint64_t observed_generation = client->event_generation;
-  while (client->event_generation == observed_generation) {
+  while (!client->event_pending) {
     pa_threaded_mainloop_wait(client->mainloop);
+
     error = pulse_context_ready(client);
     if (pulse_error_failed(error)) {
       pa_threaded_mainloop_unlock(client->mainloop);
@@ -564,13 +564,14 @@ pulse_error_t pulse_wait_for_change(pulse_client_t *client) {
     }
   }
 
+  client->event_pending = false;
   pa_threaded_mainloop_unlock(client->mainloop);
   return pulse_error_ok();
 }
 
 void pulse_wakeup(pulse_client_t *client) {
   pa_threaded_mainloop_lock(client->mainloop);
-  client->event_generation++;
+  client->event_pending = true;
   pa_threaded_mainloop_signal(client->mainloop, 0);
   pa_threaded_mainloop_unlock(client->mainloop);
 }
