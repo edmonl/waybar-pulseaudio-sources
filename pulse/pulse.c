@@ -26,11 +26,23 @@ struct pulse_client {
   pa_threaded_mainloop *mainloop;
   pa_context *context;
   bool event_pending;
+  bool cancelled;
   bool mainloop_started;
 };
 
 pulse_client_t *pulse_client_new(void) {
-  return calloc(1, sizeof(pulse_client_t));
+  pulse_client_t *client = calloc(1, sizeof(pulse_client_t));
+  if (!client) {
+    return NULL;
+  }
+
+  client->mainloop = pa_threaded_mainloop_new();
+  if (!client->mainloop) {
+    free(client);
+    return NULL;
+  }
+
+  return client;
 }
 
 void pulse_client_free(pulse_client_t *client) {
@@ -153,6 +165,12 @@ static pulse_error_t pulse_wait_for_operation(pulse_client_t *client,
   }
 
   while (pa_operation_get_state(operation) == PA_OPERATION_RUNNING) {
+    if (client->cancelled) {
+      pa_operation_cancel(operation);
+      pa_operation_unref(operation);
+      return pulse_error(PULSE_ERROR_CLIENT_CANCELLED, 0);
+    }
+
     pa_threaded_mainloop_wait(client->mainloop);
     pulse_error_t error = pulse_context_ready(client);
     if (pulse_error_failed(error)) {
@@ -181,11 +199,6 @@ static void pulse_context_state_cb(pa_context *context, void *userdata) {
 }
 
 pulse_error_t pulse_client_connect(pulse_client_t *client) {
-  client->mainloop = pa_threaded_mainloop_new();
-  if (!client->mainloop) {
-    return pulse_error(PULSE_ERROR_MAINLOOP_NEW, 0);
-  }
-
   client->context =
       pa_context_new(pa_threaded_mainloop_get_api(client->mainloop),
                      "waybar-pulseaudio-sources");
@@ -214,6 +227,11 @@ pulse_error_t pulse_client_connect(pulse_client_t *client) {
   client->mainloop_started = true;
 
   for (;;) {
+    if (client->cancelled) {
+      pa_threaded_mainloop_unlock(client->mainloop);
+      return pulse_error(PULSE_ERROR_CLIENT_CANCELLED, 0);
+    }
+
     pa_context_state_t state = pa_context_get_state(client->context);
     if (state == PA_CONTEXT_READY) {
       pa_threaded_mainloop_unlock(client->mainloop);
@@ -498,7 +516,6 @@ pulse_error_t pulse_set_default_source(pulse_client_t *client,
   return pulse_error_ok();
 }
 
-
 /* subscribe */
 static void pulse_subscribe_cb(pa_context *context,
                                pa_subscription_event_type_t event_type,
@@ -546,32 +563,35 @@ pulse_error_t pulse_client_subscribe(pulse_client_t *client) {
 
 /* wait and wake up */
 pulse_error_t pulse_wait_for_change(pulse_client_t *client) {
+  pulse_error_t error = pulse_error_ok();
   pa_threaded_mainloop_lock(client->mainloop);
 
-  pulse_error_t error = pulse_context_ready(client);
-  if (pulse_error_failed(error)) {
-    pa_threaded_mainloop_unlock(client->mainloop);
-    return error;
-  }
-
-  while (!client->event_pending) {
-    pa_threaded_mainloop_wait(client->mainloop);
+  for (;;) {
+    if (client->cancelled) {
+      error = pulse_error(PULSE_ERROR_CLIENT_CANCELLED, 0);
+      break;
+    }
 
     error = pulse_context_ready(client);
     if (pulse_error_failed(error)) {
-      pa_threaded_mainloop_unlock(client->mainloop);
-      return error;
+      break;
     }
+
+    if (client->event_pending) {
+      client->event_pending = false;
+      break;
+    }
+
+    pa_threaded_mainloop_wait(client->mainloop);
   }
 
-  client->event_pending = false;
   pa_threaded_mainloop_unlock(client->mainloop);
-  return pulse_error_ok();
+  return error;
 }
 
-void pulse_wakeup(pulse_client_t *client) {
+void pulse_client_cancel(pulse_client_t *client) {
   pa_threaded_mainloop_lock(client->mainloop);
-  client->event_pending = true;
+  client->cancelled = true;
   pa_threaded_mainloop_signal(client->mainloop, 0);
   pa_threaded_mainloop_unlock(client->mainloop);
 }

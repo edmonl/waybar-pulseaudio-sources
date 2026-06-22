@@ -7,7 +7,6 @@
 
 typedef enum {
   PULSE_ERROR_NONE = 0,
-  PULSE_ERROR_MAINLOOP_NEW,
   PULSE_ERROR_CONTEXT_NEW,
   PULSE_ERROR_CONTEXT_CONNECT,
   PULSE_ERROR_MAINLOOP_START,
@@ -20,7 +19,8 @@ typedef enum {
   PULSE_ERROR_SERVER_INFO,
   PULSE_ERROR_SOURCE_LIST,
   PULSE_ERROR_DEFAULT_SOURCE,
-  PULSE_ERROR_SET_DEFAULT_SOURCE
+  PULSE_ERROR_SET_DEFAULT_SOURCE,
+  PULSE_ERROR_CLIENT_CANCELLED
 } pulse_error_code_t;
 
 typedef struct {
@@ -59,6 +59,6 @@ pulse_snapshot_t *pulse_get_sources(pulse_client_t *client,
 pulse_error_t pulse_set_default_source(pulse_client_t *client,
                                        const char *name);
 pulse_error_t pulse_wait_for_change(pulse_client_t *client);
-void pulse_wakeup(pulse_client_t *client);
+void pulse_client_cancel(pulse_client_t *client);
 
 #endif
