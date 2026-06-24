@@ -24,7 +24,7 @@ Waybar starts the process through `exec`. Click handling sends `SIGUSR1` to the 
 
 The click command reads the pidfile only when it is present and readable. If the process is not running or the pidfile is absent, the click command is a no-op.
 
-The program writes its PID to a pidfile on startup and removes the pidfile on exit. The default pidfile is `$XDG_RUNTIME_DIR/waybar-pulseaudio-sources.pid`. The `--pidfile` flag may override this path. The pidfile parent directory must already exist. Overwriting an existing pidfile is allowed. Failure to create or write the pidfile is a fatal startup error.
+The program writes its PID to a pidfile on startup and removes the pidfile on exit when pidfile output is enabled. The default pidfile is `$XDG_RUNTIME_DIR/waybar-pulseaudio-sources.pid`; `$XDG_RUNTIME_DIR` must be set to an absolute path. The `--pidfile` flag may override this path; an explicit empty value disables pidfile output. Explicit pidfile paths are trimmed, and relative paths are resolved against the current working directory. Blank explicit pidfile values after trimming are invalid. When pidfile output is enabled, failure to determine the default path or create/write the pidfile is a fatal startup error. The pidfile parent directory must already exist. Overwriting an existing pidfile is allowed.
 
 `restart-interval` lets Waybar restart the long-running process if it exits or crashes. It is intended for continuous custom modules and must not be used together with `interval`. The example uses 300 seconds. Fatal startup errors, such as pidfile write failure, are logged to stderr and exit; Waybar may retry them on this interval.
 

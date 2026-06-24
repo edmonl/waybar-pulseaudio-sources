@@ -2,6 +2,8 @@
 
 Run commands from the project root.
 
+Before each test, record any current state the test may affect, such as the default PulseAudio source, source mute state, running test process, pidfile, or temporary log file. After each test, confirm that affected state has been restored or cleaned up.
+
 Use this cleanup after tests that start the program and after interrupted tests:
 
 ```sh
@@ -79,6 +81,56 @@ pidfile="$XDG_RUNTIME_DIR/waybar-pulseaudio-sources.pid"
 test ! -r "$pidfile" || kill "$(cat "$pidfile")"
 rm -f "$pidfile"
 ```
+
+# Disabled Pidfile
+
+1. Start the program with pidfile output disabled:
+
+```sh
+timeout 3s /tmp/waybar-pulseaudio-sources --pidfile ''
+```
+
+2. Confirm the program starts and emits status without requiring a pidfile.
+
+# Invalid Default Pidfile Directory
+
+1. Start without `--pidfile` and with `$XDG_RUNTIME_DIR` unset:
+
+```sh
+env -u XDG_RUNTIME_DIR /tmp/waybar-pulseaudio-sources
+```
+
+2. Confirm startup fails because pidfile output is enabled but no default path can be determined.
+
+3. Start without `--pidfile` and with `$XDG_RUNTIME_DIR` set to a relative path:
+
+```sh
+env XDG_RUNTIME_DIR=relative /tmp/waybar-pulseaudio-sources
+```
+
+4. Confirm startup fails because the default pidfile directory is not absolute.
+
+# Explicit Pidfile Path
+
+1. Start the program with a relative pidfile path:
+
+```sh
+(cd /tmp && timeout 3s /tmp/waybar-pulseaudio-sources --pidfile waybar-pulseaudio-sources-test.pid)
+```
+
+2. Confirm the pidfile was written relative to `/tmp` and removed after exit:
+
+```sh
+test ! -e /tmp/waybar-pulseaudio-sources-test.pid
+```
+
+3. Start the program with a blank non-empty pidfile value:
+
+```sh
+/tmp/waybar-pulseaudio-sources --pidfile '   '
+```
+
+4. Confirm startup fails because the explicit pidfile value is blank after trimming.
 
 # Source Switching
 
@@ -205,6 +257,7 @@ rm -f "$pidfile"
 # Unavailable Status
 
 This test interrupts PulseAudio availability.
+It may interrupt desktop audio and may not restore cleanly. Do not run it during routine validation; run it only when intentionally testing PulseAudio recovery.
 
 1. Start the program with a pidfile:
 

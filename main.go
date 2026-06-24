@@ -221,7 +221,7 @@ func parsePidfile() string {
 		return filepath.Join(runtimeDir, pidfileName)
 	}
 
-	pidfile = strings.TrimSpace(os.ExpandEnv(pidfile))
+	pidfile = strings.TrimSpace(pidfile)
 	if pidfile == "" {
 		log.Fatal("--pidfile must not be blank")
 	}
