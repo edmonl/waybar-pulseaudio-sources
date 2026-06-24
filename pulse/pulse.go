@@ -4,17 +4,15 @@ package pulse
 
 /*
 #cgo pkg-config: libpulse
-#include <stdlib.h>
 #include "pulse.h"
 */
 import "C"
 
 import (
-	"cmp"
+	"context"
 	"errors"
 	"fmt"
-	"slices"
-	"unsafe"
+	"sync"
 )
 
 // Source is a PulseAudio source as seen by this program.
@@ -37,22 +35,37 @@ type Source struct {
 
 // Client owns a connection to PulseAudio.
 type Client struct {
-	ptr *C.pulse_client_t
+	mu sync.Mutex
+
+	ptr    *C.pulse_client_t
+	ctx    context.Context
+	active sync.WaitGroup
+
+	stopContextShutdown func() bool
+	contextShutdownDone chan struct{}
+	closed              chan struct{}
 }
 
-// NewClient connects to PulseAudio and subscribes to source and server events.
-func NewClient() (*Client, error) {
+// NewClient connects to PulseAudio, subscribes to source and server events,
+// and permanently shuts down the client when ctx is cancelled.
+func NewClient(ctx context.Context) (*Client, error) {
 	ptr := C.pulse_client_new()
 	if ptr == nil {
-		return nil, errors.New("failed to allocate PulseAudio client")
+		return nil, errors.New("failed to create PulseAudio client")
 	}
 
-	client := &Client{ptr: ptr}
-	if err := pulseError(C.pulse_client_connect(ptr)); err != nil {
-		client.Close()
-		return nil, err
+	client := &Client{
+		ptr:                 ptr,
+		ctx:                 ctx,
+		contextShutdownDone: make(chan struct{}),
+		closed:              make(chan struct{}),
 	}
-	if err := pulseError(C.pulse_client_subscribe(ptr)); err != nil {
+	client.stopContextShutdown = context.AfterFunc(ctx, func() {
+		C.pulse_client_shutdown(ptr)
+		close(client.contextShutdownDone)
+	})
+
+	if err := client.pulseError(C.pulse_client_start(ptr)); err != nil {
 		client.Close()
 		return nil, err
 	}
@@ -60,30 +73,43 @@ func NewClient() (*Client, error) {
 	return client, nil
 }
 
-// Close disconnects from PulseAudio and releases client resources.
+// Close shuts down the client, waits for active operations to return, and
+// releases PulseAudio resources.
 func (c *Client) Close() {
-	if c.ptr == nil {
+	c.mu.Lock()
+	ptr := c.ptr
+	c.ptr = nil
+	if ptr == nil {
+		c.mu.Unlock()
+		<-c.closed
 		return
 	}
+	c.mu.Unlock()
+	defer close(c.closed)
 
-	C.pulse_client_free(c.ptr)
-	c.ptr = nil
+	if c.stopContextShutdown() {
+		C.pulse_client_shutdown(ptr)
+		close(c.contextShutdownDone)
+	} else {
+		<-c.contextShutdownDone
+	}
+
+	c.active.Wait()
+	C.pulse_client_free(ptr)
 }
 
 // DefaultSource returns the current default source.
-//
-// A nil source with a nil error means PulseAudio did not report a usable
-// default source.
 func (c *Client) DefaultSource() (*Source, error) {
-	ptr := c.mustPtr()
+	ptr, err := c.beginOperation()
+	if err != nil {
+		return nil, err
+	}
+	defer c.endOperation()
 
 	var pulseErr C.pulse_error_t
 	source := C.pulse_get_default_source(ptr, &pulseErr)
-	if err := pulseError(pulseErr); err != nil {
+	if err := c.pulseError(pulseErr); err != nil {
 		return nil, err
-	}
-	if source == nil {
-		return nil, nil
 	}
 	defer C.pulse_source_free(source)
 
@@ -92,79 +118,38 @@ func (c *Client) DefaultSource() (*Source, error) {
 
 // CycleDefaultSource sets the next eligible source as the default source.
 func (c *Client) CycleDefaultSource() error {
-	var pulseErr C.pulse_error_t
-	snapshot := C.pulse_get_sources(c.mustPtr(), &pulseErr)
-	if err := pulseError(pulseErr); err != nil {
+	ptr, err := c.beginOperation()
+	if err != nil {
 		return err
 	}
-	defer C.pulse_snapshot_free(snapshot)
+	defer c.endOperation()
 
-	count := int(snapshot.count)
-	if count == 0 {
-		return errors.New("no PulseAudio sources available")
-	}
-
-	var defaultSourceName string
-	if snapshot.default_source_name != nil {
-		defaultSourceName = C.GoString(snapshot.default_source_name)
-	}
-
-	sources := make([]*Source, 0, count)
-	for _, source := range unsafe.Slice(snapshot.sources, count) {
-		sources = append(sources, sourceFromC(&source))
-	}
-
-	if len(sources) == 0 {
-		return errors.New("no PulseAudio sources available")
-	}
-
-	slices.SortStableFunc(sources, func(a, b *Source) int {
-		return cmp.Compare(a.Index, b.Index)
-	})
-
-	next := 0
-	for i, source := range sources {
-		if source.Name == defaultSourceName {
-			next = (i + 1) % len(sources)
-			break
-		}
-	}
-
-	cName := C.CString(sources[next].Name)
-	defer C.free(unsafe.Pointer(cName))
-
-	if err := pulseError(C.pulse_set_default_source(c.mustPtr(), cName)); err != nil {
-		return err
-	}
-
-	return nil
+	return c.pulseError(C.pulse_cycle_default_source(ptr))
 }
 
 // WaitForChange blocks until PulseAudio reports a subscribed source or server event.
 func (c *Client) WaitForChange() error {
-	return pulseError(C.pulse_wait_for_change(c.mustPtr()))
-}
-
-// Wakeup unblocks a goroutine waiting in WaitForChange.
-func (c *Client) Wakeup() {
-	C.pulse_wakeup(c.mustPtr())
-}
-
-func pulseError(pulseErr C.pulse_error_t) error {
-	if pulseErr.code == C.PULSE_ERROR_NONE {
-		return nil
+	ptr, err := c.beginOperation()
+	if err != nil {
+		return err
 	}
+	defer c.endOperation()
 
+	return c.pulseError(C.pulse_wait_for_change(ptr))
+}
+
+func (c *Client) pulseError(pulseErr C.pulse_error_t) error {
 	var message string
 	switch pulseErr.code {
-	case C.PULSE_ERROR_MAINLOOP_NEW:
-		message = "failed to create PulseAudio mainloop"
-	case C.PULSE_ERROR_CONTEXT_NEW:
-		message = "failed to create PulseAudio context"
+	case C.PULSE_ERROR_NONE:
+		return nil
+	case C.PULSE_ERROR_CLIENT_SHUTDOWN:
+		if err := c.ctx.Err(); err != nil {
+			return err
+		}
+		message = "PulseAudio client closed"
 	case C.PULSE_ERROR_CONTEXT_CONNECT:
 		message = "failed to connect to PulseAudio"
-	case C.PULSE_ERROR_MAINLOOP_START:
-		message = "failed to start PulseAudio mainloop"
 	case C.PULSE_ERROR_CONTEXT_FAILED:
 		message = "PulseAudio connection failed"
 	case C.PULSE_ERROR_CONTEXT_NOT_READY:
@@ -181,6 +166,8 @@ func pulseError(pulseErr C.pulse_error_t) error {
 		message = "failed to get PulseAudio server info"
 	case C.PULSE_ERROR_SOURCE_LIST:
 		message = "failed to get PulseAudio source list"
+	case C.PULSE_ERROR_NO_SOURCES:
+		message = "no PulseAudio sources available"
 	case C.PULSE_ERROR_DEFAULT_SOURCE:
 		message = "failed to get PulseAudio default source"
 	case C.PULSE_ERROR_SET_DEFAULT_SOURCE:
@@ -195,12 +182,20 @@ func pulseError(pulseErr C.pulse_error_t) error {
 	return errors.New(message)
 }
 
-func (c *Client) mustPtr() *C.pulse_client_t {
+func (c *Client) beginOperation() (*C.pulse_client_t, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.ptr == nil {
-		panic("pulse: closed Client")
+		return nil, errors.New("PulseAudio client closed")
 	}
 
-	return c.ptr
+	c.active.Add(1)
+	return c.ptr, nil
+}
+
+func (c *Client) endOperation() {
+	c.active.Done()
 }
 
 func sourceFromC(source *C.pulse_source_t) *Source {
