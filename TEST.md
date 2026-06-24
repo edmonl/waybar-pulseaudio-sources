@@ -17,7 +17,7 @@ rm -f "$pidfile" /tmp/waybar-pulseaudio-sources.log
 1. Format, test, vet, and build:
 
 ```sh
-gofmt -w *.go
+gofmt -w *.go pulse/*.go
 go test ./...
 go vet ./...
 go build -o /tmp/waybar-pulseaudio-sources .

@@ -53,7 +53,9 @@ func run(ctx context.Context) error {
 
 	pendingCycle := false
 	for {
-		if err := runPulse(ctx, output, userSignal, pendingCycle); err != nil {
+		var err error
+		pendingCycle, err = runPulse(ctx, output, userSignal, pendingCycle)
+		if err != nil {
 			return err
 		}
 
@@ -62,17 +64,17 @@ func run(ctx context.Context) error {
 			return err
 		}
 
-		pendingCycle = cycleRequested
+		pendingCycle = pendingCycle || cycleRequested
 	}
 }
 
-func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Signal, pendingCycle bool) error {
+func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Signal, pendingCycle bool) (bool, error) {
 	client, err := pulse.NewClient(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return err
+			return pendingCycle, err
 		}
-		return output.Emit(waybarUnavailable(err))
+		return pendingCycle, output.Emit(waybarUnavailable(err))
 	}
 	defer client.Close()
 
@@ -84,18 +86,18 @@ func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Sign
 		if pendingCycle {
 			if err := client.CycleDefaultSource(); err != nil {
 				if errors.Is(err, context.Canceled) {
-					return err
+					return pendingCycle, err
 				}
 				if e := output.EmitIfChanged(waybarError(err)); e != nil {
-					return e
+					return pendingCycle, e
 				}
 			} else {
 				state, err := getWaybarOutput(client)
 				if err != nil {
-					return err
+					return pendingCycle, err
 				}
 				if err := output.Emit(state); err != nil {
-					return err
+					return pendingCycle, err
 				}
 			}
 
@@ -103,21 +105,21 @@ func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Sign
 		} else {
 			state, err := getWaybarOutput(client)
 			if err != nil {
-				return err
+				return pendingCycle, err
 			}
 			if err := output.EmitIfChanged(state); err != nil {
-				return err
+				return pendingCycle, err
 			}
 		}
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return pendingCycle, ctx.Err()
 		case err := <-waitErrors:
 			if errors.Is(err, context.Canceled) {
-				return err
+				return pendingCycle, err
 			}
-			return output.Emit(waybarUnavailable(err))
+			return pendingCycle, output.Emit(waybarUnavailable(err))
 		case <-userSignal:
 			pendingCycle = true
 		case <-changes:
