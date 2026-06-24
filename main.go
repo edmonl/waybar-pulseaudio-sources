@@ -27,20 +27,14 @@ func main() {
 	log.SetFlags(0)
 	log.SetPrefix("waybar-pulseaudio-sources: ")
 
-	pidfile := ""
-	flag.StringVar(&pidfile, "pidfile", defaultPIDFile(), "write the process ID to this file")
-	flag.Parse()
-
-	pidfile, err := normalizePIDFile(pidfile)
-	if err != nil {
-		log.Fatal(err)
+	pidfile := parsePidfile()
+	if pidfile != "" {
+		removePIDFile, err := writePIDFile(pidfile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer removePIDFile()
 	}
-
-	removePIDFile, err := writePIDFile(pidfile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer removePIDFile()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -73,8 +67,11 @@ func run(ctx context.Context) error {
 }
 
 func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Signal, pendingCycle bool) error {
-	client, err := pulse.NewClient()
+	client, err := pulse.NewClient(ctx)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
 		return output.Emit(waybarUnavailable(err))
 	}
 	defer client.Close()
@@ -86,22 +83,40 @@ func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Sign
 	for {
 		if pendingCycle {
 			if err := client.CycleDefaultSource(); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return err
+				}
 				if e := output.EmitIfChanged(waybarError(err)); e != nil {
 					return e
 				}
-			} else if err := output.Emit(getWaybarOutput(client)); err != nil {
-				return err
+			} else {
+				state, err := getWaybarOutput(client)
+				if err != nil {
+					return err
+				}
+				if err := output.Emit(state); err != nil {
+					return err
+				}
 			}
 
 			pendingCycle = false
-		} else if err := output.EmitIfChanged(getWaybarOutput(client)); err != nil {
-			return err
+		} else {
+			state, err := getWaybarOutput(client)
+			if err != nil {
+				return err
+			}
+			if err := output.EmitIfChanged(state); err != nil {
+				return err
+			}
 		}
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case err := <-waitErrors:
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
 			return output.Emit(waybarUnavailable(err))
 		case <-userSignal:
 			pendingCycle = true
@@ -110,16 +125,16 @@ func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Sign
 	}
 }
 
-func getWaybarOutput(client *pulse.Client) any {
+func getWaybarOutput(client *pulse.Client) (any, error) {
 	source, err := client.DefaultSource()
 	if err != nil {
-		return waybarError(err)
-	}
-	if source == nil {
-		return waybarDefaultSourceNotFound()
+		if errors.Is(err, context.Canceled) {
+			return nil, err
+		}
+		return waybarError(err), nil
 	}
 
-	return waybarState(source)
+	return waybarState(source), nil
 }
 
 func watchPulse(client *pulse.Client) (<-chan struct{}, <-chan error, func()) {
@@ -157,7 +172,7 @@ func watchPulse(client *pulse.Client) (<-chan struct{}, <-chan error, func()) {
 	stopWatching := func() {
 		once.Do(func() {
 			close(stop)
-			client.Wakeup()
+			client.Close()
 			<-done
 		})
 	}
@@ -179,21 +194,47 @@ func waitForReconnect(ctx context.Context, userSignal <-chan os.Signal) (bool, e
 	}
 }
 
-func defaultPIDFile() string {
-	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
-	if runtimeDir == "" {
-		return ""
+func parsePidfile() string {
+	var pidfile string
+	flag.StringVar(&pidfile, "pidfile", "", "write the process ID to this file; empty disables the pidfile")
+	flag.Parse()
+
+	if pidfile == "" {
+		pidfileDisabled := false
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "pidfile" {
+				pidfileDisabled = true
+			}
+		})
+		if pidfileDisabled {
+			return ""
+		}
+
+		runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+		if runtimeDir == "" {
+			log.Fatal("XDG_RUNTIME_DIR is empty and --pidfile was not provided")
+		}
+		if !filepath.IsAbs(runtimeDir) {
+			log.Fatal("XDG_RUNTIME_DIR must be an absolute path")
+		}
+
+		return filepath.Join(runtimeDir, pidfileName)
 	}
 
-	return filepath.Join(runtimeDir, pidfileName)
-}
-
-func normalizePIDFile(path string) (string, error) {
-	path = strings.TrimSpace(os.ExpandEnv(path))
-	if path == "" {
-		return "", errors.New("XDG_RUNTIME_DIR is empty and --pidfile was not provided")
+	pidfile = strings.TrimSpace(os.ExpandEnv(pidfile))
+	if pidfile == "" {
+		log.Fatal("--pidfile must not be blank")
 	}
-	return path, nil
+
+	if !filepath.IsAbs(pidfile) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			log.Fatal(err)
+		}
+		pidfile = filepath.Join(cwd, pidfile)
+	}
+
+	return pidfile
 }
 
 func writePIDFile(path string) (func(), error) {

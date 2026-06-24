@@ -35,14 +35,6 @@ func waybarState(source *pulse.Source) waybarOutput {
 	}
 }
 
-func waybarDefaultSourceNotFound() waybarOutput {
-	return waybarOutput{
-		Text:    "No source " + mutedMicrophoneIcon,
-		Tooltip: "Default source not found",
-		Class:   "unavailable",
-	}
-}
-
 func waybarError(err error) waybarOutput {
 	return waybarOutput{
 		Text:    "Error " + mutedMicrophoneIcon,
