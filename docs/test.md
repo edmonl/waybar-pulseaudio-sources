@@ -4,6 +4,8 @@ Run commands from the project root.
 
 Before each test, record any current state the test may affect, such as the default PulseAudio source, source mute state, running test process, pidfile, or temporary log file. After each test, confirm that affected state has been restored or cleaned up.
 
+Tests that start `/tmp/waybar-pulseaudio-sources` without `timeout` run until stopped. If a test hangs or is interrupted, stop the process with `Ctrl-C` when it is in the foreground, or use the cleanup command below when it is running in another shell.
+
 Use this cleanup after tests that start the program and after interrupted tests:
 
 ```sh
@@ -14,14 +16,18 @@ rm -f "$pidfile" /tmp/waybar-pulseaudio-sources.log
 
 # Build Checks
 
-1. Format, test, vet, and build:
+This check writes `/tmp/waybar-pulseaudio-sources`, which later tests use. Remove it after manual testing if it is no longer needed.
+
+1. Check formatting, run tests, vet, and build:
 
 ```sh
-gofmt -w *.go pulse/*.go
+test -z "$(gofmt -l *.go pulse/*.go)"
 go test ./...
 go vet ./...
 go build -o /tmp/waybar-pulseaudio-sources .
 ```
+
+2. If the formatting check prints files, run `gofmt -w` on those files and inspect the resulting diff before continuing.
 
 # Startup Smoke Test
 
@@ -34,7 +40,7 @@ timeout 3s /tmp/waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sourc
 2. Confirm stdout contains one newline-delimited JSON object similar to:
 
 ```json
-{"text":"65% ","tooltip":"Microphone Name","class":"source","percentage":65}
+{"text":"65%","tooltip":"Microphone Name","class":"source","percentage":65}
 ```
 
 3. Confirm the pidfile was removed after exit:
@@ -91,6 +97,32 @@ timeout 3s /tmp/waybar-pulseaudio-sources --pidfile ''
 ```
 
 2. Confirm the program starts and emits status without requiring a pidfile.
+
+# Format Flag
+
+1. Start the program with a custom format:
+
+```sh
+timeout 3s /tmp/waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sources-test.pid --format '{{.Desc}} {{.Volume}}%'
+```
+
+2. Confirm stdout contains a JSON object whose `text` field contains the default source description and volume.
+
+3. Start the program with an invalid format:
+
+```sh
+/tmp/waybar-pulseaudio-sources --pidfile '' --format '{{.Description}}'
+```
+
+4. Confirm startup fails with a fatal `--format` error.
+
+5. Start the program with an empty format:
+
+```sh
+/tmp/waybar-pulseaudio-sources --pidfile '' --format ''
+```
+
+6. Confirm startup fails with a fatal `--format` error.
 
 # Invalid Default Pidfile Directory
 
@@ -182,6 +214,8 @@ rm -f "$pidfile"
 
 # PulseAudio Event Updates
 
+This test may change the default PulseAudio source and source mute state.
+
 1. Record the current default source:
 
 ```sh
@@ -199,13 +233,24 @@ printf '%s\n' "$original_source"
 
 4. Confirm the program emits a new JSON line without restarting or polling.
 
-5. Mute and unmute the default source.
-
-6. Confirm the icon changes between `` and ``.
-
-7. Restore the original default source and stop the test process:
+5. Record the current default source and its mute state, then mute and unmute it:
 
 ```sh
+event_source=$(pactl get-default-source)
+event_source_mute=$(pactl get-source-mute "$event_source")
+printf '%s\n' "$event_source"
+printf '%s\n' "$event_source_mute"
+```
+
+6. Confirm the `class` changes between `source` and `muted`.
+
+7. Restore the muted source's original mute state and the original default source, then stop the test process:
+
+```sh
+case "$event_source_mute" in
+  *yes) pactl set-source-mute "$event_source" 1 ;;
+  *no) pactl set-source-mute "$event_source" 0 ;;
+esac
 pactl set-default-source "$original_source"
 pidfile=/tmp/waybar-pulseaudio-sources-test.pid
 test ! -r "$pidfile" || kill "$(cat "$pidfile")"
@@ -310,6 +355,8 @@ waybar-pulseaudio-sources: write pidfile: open /tmp/missing-dir/waybar-pulseaudi
 3. No cleanup is needed unless the command unexpectedly created files.
 
 # Duplicate Output
+
+This test writes a temporary log file and runs until stopped.
 
 1. Start the program and capture stdout:
 

@@ -1,10 +1,20 @@
-# Overview
+# Scope
 
-This project is a Go program that uses CGo bindings to `libpulse`.
+The project provides a long-running Waybar custom module for PulseAudio input sources.
 
-It runs as a long-lived Waybar custom module process and writes newline-delimited JSON updates to stdout. Each JSON line is flushed after it is written.
+The program reports the current default PulseAudio source, updates Waybar when relevant PulseAudio state changes, and lets the user cycle to the next available input source from Waybar.
 
-The program subscribes to PulseAudio source and server events, then emits updates when relevant PulseAudio state changes.
+# Requirements
+
+The program requires a PulseAudio-compatible server and a Waybar configuration that runs it as a continuous custom module.
+
+When pidfile output is enabled, `$XDG_RUNTIME_DIR` must be set to an absolute path unless `--pidfile` provides an explicit path.
+
+# Runtime Behavior
+
+The program writes newline-delimited JSON updates to stdout. Each JSON line is flushed after it is written.
+
+The program emits an update at startup and whenever relevant PulseAudio source or server state changes.
 
 # Waybar Integration
 
@@ -31,10 +41,17 @@ The program writes its PID to a pidfile on startup and removes the pidfile on ex
 # Display Behavior
 
 The program avoids writing duplicate JSON lines when multiple PulseAudio events produce the same rendered state.
-The module text shows the default PulseAudio source volume and mute state:
+The module text is rendered from the default PulseAudio source with a Go `text/template`.
+The default template is `{{.Volume}}%`.
+The `--format` flag overrides this template. Templates may use these fields:
 
-1. Unmuted: `60% `
-2. Muted: `60% `
+1. `Name`: PulseAudio source name.
+2. `Desc`: human-readable PulseAudio source description.
+3. `Muted`: whether the source is muted.
+4. `Volume`: unclamped average channel volume percentage.
+
+Empty format values and invalid templates are fatal startup errors.
+The template applies only to the Waybar `text` field, not the tooltip.
 
 The tooltip shows the default source's human-readable name.
 
@@ -66,6 +83,8 @@ Source switching uses ascending PulseAudio source index order. PulseAudio source
 
 Changing the default source primarily affects new recording streams. Existing recording streams may continue using their current source unless the application or PulseAudio policy explicitly moves them.
 
-# Scope
+# Design Notes
 
-The program only handles PulseAudio sources.
+The process is intended to be restarted by Waybar if it exits or crashes.
+
+Reconnect behavior favors avoiding tight retry loops during PulseAudio outages while still responding immediately to a user source-cycling request.
