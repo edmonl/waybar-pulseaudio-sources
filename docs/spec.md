@@ -23,16 +23,16 @@ Example Waybar configuration:
 ```json
 "custom/pulseaudio-sources": {
     "exec": "waybar-pulseaudio-sources",
-    "on-click": "pidfile=${XDG_RUNTIME_DIR}/waybar-pulseaudio-sources.pid; test -r \"$pidfile\" && kill -SIGUSR1 \"$(cat \"$pidfile\")\"",
+    "on-click": "waybar-pulseaudio-sources switch",
     "exec-on-event": false,
     "return-type": "json",
     "restart-interval": 300
 }
 ```
 
-Waybar starts the process through `exec`. Click handling sends `SIGUSR1` to the running process.
+Waybar starts the process through `exec`. Click handling runs `waybar-pulseaudio-sources switch`, which sends `SIGUSR1` to the running process.
 
-The click command reads the pidfile only when it is present and readable. If the process is not running or the pidfile is absent, the click command is a no-op.
+The switch command reads the pidfile and signals the recorded process. If the pidfile is absent or the recorded process cannot be signaled, the switch command exits with an error.
 
 The program writes its PID to a pidfile on startup and removes the pidfile on exit when pidfile output is enabled. The default pidfile is `$XDG_RUNTIME_DIR/waybar-pulseaudio-sources.pid`; `$XDG_RUNTIME_DIR` must be set to an absolute path. The `--pidfile` flag may override this path; an explicit empty value disables pidfile output. Explicit pidfile paths are trimmed, and relative paths are resolved against the current working directory. Blank explicit pidfile values after trimming are invalid. When pidfile output is enabled, failure to determine the default path or create/write the pidfile is a fatal startup error. The pidfile parent directory must already exist. Overwriting an existing pidfile is allowed.
 
@@ -74,6 +74,8 @@ If PulseAudio is unavailable, the program emits unavailable status and retries c
 # Source Switching
 
 On `SIGUSR1`, the program selects the next available PulseAudio source and sets it as the default source. Reconnection is a prerequisite for this operation when PulseAudio is unavailable.
+
+The `switch` subcommand accepts `--pidfile` to match a long-running process started with a non-default pidfile. An explicit empty `--pidfile` value is invalid for `switch` because there is no process ID to read.
 
 Sources whose PulseAudio name ends with `.monitor` are excluded from display and source switching.
 

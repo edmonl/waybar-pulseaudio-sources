@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -15,44 +14,47 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/edmonl/waybar-pulseaudio-sources/cli"
 	"github.com/edmonl/waybar-pulseaudio-sources/pulse"
 	"github.com/edmonl/waybar-pulseaudio-sources/waybar"
 )
 
-const (
-	reconnectDelay = 10 * time.Minute
-	pidfileName    = "waybar-pulseaudio-sources.pid"
-)
+const reconnectDelay = 10 * time.Minute
 
 func main() {
 	log.SetFlags(0)
 	log.SetPrefix("waybar-pulseaudio-sources: ")
 
-	options := parseOptions()
+	command, err := cli.Parse(filepath.Base(os.Args[0]), os.Args[1:])
+	if err != nil {
+		if cli.IsHelp(err) {
+			return
+		}
+		log.Fatal(err)
+	}
+	if command.SwitchSource {
+		if err := switchSource(command.Pidfile); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, options); err != nil && !errors.Is(err, context.Canceled) {
+	if err := run(ctx, command); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatal(err)
 	}
 }
 
-type options struct {
-	pidfile string
-	text    string
-	class   string
-	tooltip string
-}
-
-func run(ctx context.Context, options options) error {
-	formatter, err := waybar.NewFormatter(options.text, options.class, options.tooltip)
+func run(ctx context.Context, command cli.Command) error {
+	formatter, err := waybar.NewFormatter(command.Text, command.Class, command.Tooltip)
 	if err != nil {
 		return err
 	}
 
-	if options.pidfile != "" {
-		removePIDFile, err := writePIDFile(options.pidfile)
+	if command.Pidfile != "" {
+		removePIDFile, err := writePIDFile(command.Pidfile)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -210,82 +212,27 @@ func waitForReconnect(ctx context.Context, userSignal <-chan os.Signal) (bool, e
 	}
 }
 
-func parseOptions() options {
-	var pidfile string
-
-	opts := options{
-		text:    "{{or (.State | capitalize) (print .Volume `%`)}}",
-		class:   "{{.State}}",
-		tooltip: "{{.Desc}}",
-	}
-	flag.Usage = usage
-	flag.StringVar(&pidfile, "pidfile", "", "write the process ID to this file; empty disables the pidfile")
-	flag.StringVar(&opts.text, "text", opts.text, "Go template for Waybar text")
-	flag.StringVar(&opts.class, "class", opts.class, "Go template for Waybar class")
-	flag.StringVar(&opts.tooltip, "tooltip", opts.tooltip, "Go template for Waybar tooltip")
-	flag.Parse()
-
-	opts.pidfile = parsePidfile(pidfile)
-	return opts
-}
-
-func usage() {
-	output := flag.CommandLine.Output()
-	fmt.Fprintln(output, "A long-running Waybar custom module for PulseAudio input sources.")
-	fmt.Fprintln(output)
-	fmt.Fprintln(output, "Template fields for -text, -class, and -tooltip:")
-	fmt.Fprintln(output, "  Index   PulseAudio runtime source index, or -1 when no source is available")
-	fmt.Fprintln(output, "  Name    PulseAudio source name")
-	fmt.Fprintln(output, "  Desc    PulseAudio source description, or error detail when no source is available")
-	fmt.Fprintln(output, "  Muted   whether the source is muted")
-	fmt.Fprintln(output, "  Volume  unclamped average channel volume percentage")
-	fmt.Fprintln(output, "  State   empty for a healthy unmuted source, or muted, unavailable, error")
-	fmt.Fprintln(output, "  Available  whether source data is available")
-	fmt.Fprintln(output)
-	fmt.Fprintln(output, "Template functions:")
-	fmt.Fprintln(output, "  capitalize  uppercase the first character of a string")
-	fmt.Fprintln(output)
-	fmt.Fprintln(output, "Flags:")
-	flag.PrintDefaults()
-}
-
-func parsePidfile(pidfile string) string {
-	if pidfile == "" {
-		pidfileDisabled := false
-		flag.Visit(func(f *flag.Flag) {
-			if f.Name == "pidfile" {
-				pidfileDisabled = true
-			}
-		})
-		if pidfileDisabled {
-			return ""
-		}
-
-		runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
-		if runtimeDir == "" {
-			log.Fatal("XDG_RUNTIME_DIR is empty and --pidfile was not provided")
-		}
-		if !filepath.IsAbs(runtimeDir) {
-			log.Fatal("XDG_RUNTIME_DIR must be an absolute path")
-		}
-
-		return filepath.Join(runtimeDir, pidfileName)
+func switchSource(pidfile string) error {
+	content, err := os.ReadFile(pidfile)
+	if err != nil {
+		return fmt.Errorf("failed to read pidfile: %w", err)
 	}
 
-	pidfile = strings.TrimSpace(pidfile)
-	if pidfile == "" {
-		log.Fatal("--pidfile must not be blank")
+	pidText := strings.TrimSpace(string(content))
+	pid, err := strconv.Atoi(pidText)
+	if err != nil || pid <= 0 {
+		return fmt.Errorf("invalid process ID %v in pidfile", pidText)
 	}
 
-	if !filepath.IsAbs(pidfile) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			log.Fatal(err)
-		}
-		pidfile = filepath.Join(cwd, pidfile)
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("failed to find process %v: %w", pid, err)
+	}
+	if err := process.Signal(syscall.SIGUSR1); err != nil {
+		return fmt.Errorf("failed to signal process %v: %w", pid, err)
 	}
 
-	return pidfile
+	return nil
 }
 
 func writePIDFile(path string) (func(), error) {

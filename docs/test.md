@@ -205,10 +205,10 @@ pactl list short sources
 /tmp/waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sources-test.pid
 ```
 
-5. In another shell, send `SIGUSR1`:
+5. In another shell, switch sources:
 
 ```sh
-kill -SIGUSR1 "$(cat /tmp/waybar-pulseaudio-sources-test.pid)"
+/tmp/waybar-pulseaudio-sources switch --pidfile /tmp/waybar-pulseaudio-sources-test.pid
 ```
 
 6. Confirm the default source changed:
@@ -298,10 +298,10 @@ pactl list short sources
 /tmp/waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sources-test.pid
 ```
 
-5. Cycle sources with `SIGUSR1`:
+5. Cycle sources:
 
 ```sh
-kill -SIGUSR1 "$(cat /tmp/waybar-pulseaudio-sources-test.pid)"
+/tmp/waybar-pulseaudio-sources switch --pidfile /tmp/waybar-pulseaudio-sources-test.pid
 ```
 
 6. Confirm monitor sources are not selected as the default by this program.
@@ -338,10 +338,10 @@ It may interrupt desktop audio and may not restore cleanly. Do not run it during
 
 5. Confirm the program reconnects and emits normal source status.
 
-6. Repeat the test, but send `SIGUSR1` while unavailable:
+6. Repeat the test, but switch sources while unavailable:
 
 ```sh
-kill -SIGUSR1 "$(cat /tmp/waybar-pulseaudio-sources-test.pid)"
+/tmp/waybar-pulseaudio-sources switch --pidfile /tmp/waybar-pulseaudio-sources-test.pid
 ```
 
 7. Confirm the program retries connection immediately. After PulseAudio is restored, confirm the pending click is applied as one source-cycle request.
