@@ -1,8 +1,10 @@
 A Waybar custom module for showing and changing the default PulseAudio input source, such as a microphone.
+![Waybar module showing microphone volume and icon](screenshot.png)
 
 By default, the module shows the default source volume in Waybar, uses the source description as the tooltip, and can switch to the next non-monitor input source. It works with PulseAudio-compatible servers, including PipeWire's PulseAudio server.
 
-![Waybar module showing microphone volume and icon](screenshot.png)
+This project exists because Waybar's built-in PulseAudio support is much stronger for output sinks than for input sources. This provides a focused, scriptable input-source module for microphone status and source switching.
+
 
 # Quick Start
 
@@ -186,3 +188,7 @@ The `percentage` value is the unclamped PulseAudio average channel volume percen
 1. Run `waybar-pulseaudio-sources` in a terminal and check stderr for startup or PulseAudio errors.
 2. If click switching does not work, confirm the pidfile exists and contains the process ID of the running module.
 3. If switching works but an application keeps using the old input source, check that application's input-source configuration or restart the application.
+
+# Contributing
+
+Feel free to open GitHub issues for suggestions.
