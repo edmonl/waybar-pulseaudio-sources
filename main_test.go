@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -63,8 +64,18 @@ func TestSwitchSourceSignalsPID(t *testing.T) {
 }
 
 func TestSwitchSourceRejectsStalePID(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=TestStalePIDHelperProcess")
+	cmd.Env = append(os.Environ(), "WAYBAR_PULSEAUDIO_SOURCES_STALE_PID_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	stalePID := cmd.Process.Pid
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+
 	path := filepath.Join(t.TempDir(), "stale.pid")
-	if err := os.WriteFile(path, []byte("4194303\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(strconv.Itoa(stalePID)+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,6 +86,13 @@ func TestSwitchSourceRejectsStalePID(t *testing.T) {
 	if !strings.Contains(err.Error(), "signal process") {
 		t.Fatalf("switchSource error = %q, want signal process", err)
 	}
+}
+
+func TestStalePIDHelperProcess(t *testing.T) {
+	if os.Getenv("WAYBAR_PULSEAUDIO_SOURCES_STALE_PID_HELPER") != "1" {
+		return
+	}
+	os.Exit(0)
 }
 
 func TestWritePIDFileRejectsLivePID(t *testing.T) {

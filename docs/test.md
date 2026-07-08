@@ -365,7 +365,7 @@ rm -f "$pidfile"
 2. Confirm the program exits with a fatal stderr message similar to:
 
 ```text
-waybar-pulseaudio-sources: write pidfile: open /tmp/missing-dir/waybar-pulseaudio-sources.pid: no such file or directory
+waybar-pulseaudio-sources: failed to write pidfile /tmp/missing-dir/waybar-pulseaudio-sources.pid: open /tmp/missing-dir/waybar-pulseaudio-sources.pid: no such file or directory
 ```
 
 3. No cleanup is needed unless the command unexpectedly created files.
