@@ -1,3 +1,5 @@
+## Overview
+
 A Waybar custom module for showing and changing the default PulseAudio input source, such as a microphone.
 ![Waybar module showing microphone volume and icon](screenshot.png)
 
