@@ -21,13 +21,13 @@ This check writes `/tmp/waybar-pulseaudio-sources`, which later tests use. Remov
 1. Check formatting, run tests, vet, and build:
 
 ```sh
-test -z "$(gofmt -l *.go pulse/*.go)"
+test -z "$(gofmt -l -s .)"
 go test ./...
 go vet ./...
 go build -o /tmp/waybar-pulseaudio-sources .
 ```
 
-2. If the formatting check prints files, run `gofmt -w` on those files and inspect the resulting diff before continuing.
+2. If the formatting check prints files, run `gofmt -s -w .` on those files and inspect the resulting diff before continuing.
 
 # Startup Smoke Test
 
@@ -40,7 +40,7 @@ timeout 3s /tmp/waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sourc
 2. Confirm stdout contains one newline-delimited JSON object similar to:
 
 ```json
-{"text":"65%","tooltip":"Microphone Name","class":"source","percentage":65}
+{"text":"65%","tooltip":"Microphone Name","percentage":65}
 ```
 
 3. Confirm the pidfile was removed after exit:
@@ -98,31 +98,47 @@ timeout 3s /tmp/waybar-pulseaudio-sources --pidfile ''
 
 2. Confirm the program starts and emits status without requiring a pidfile.
 
-# Format Flag
+# Text, Class, And Tooltip Flags
 
-1. Start the program with a custom format:
+1. Start the program with a custom text template:
 
 ```sh
-timeout 3s /tmp/waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sources-test.pid --format '{{.Desc}} {{.Volume}}%'
+timeout 3s /tmp/waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sources-test.pid --text '{{.Desc}} {{.Volume}}%'
 ```
 
 2. Confirm stdout contains a JSON object whose `text` field contains the default source description and volume.
 
-3. Start the program with an invalid format:
+3. Start the program with custom class and tooltip templates:
 
 ```sh
-/tmp/waybar-pulseaudio-sources --pidfile '' --format '{{.Description}}'
+timeout 3s /tmp/waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sources-test.pid --class 'mic-{{if .State}}{{.State}}{{else}}active{{end}}' --tooltip '{{.Index}} {{.Name}} {{.State}}'
 ```
 
-4. Confirm startup fails with a fatal `--format` error.
+4. Confirm stdout contains a JSON object whose `class` field starts with `mic-` and whose `tooltip` field contains the source index and PulseAudio source name.
 
-5. Start the program with an empty format:
+5. Start the program with a malformed text template:
 
 ```sh
-/tmp/waybar-pulseaudio-sources --pidfile '' --format ''
+/tmp/waybar-pulseaudio-sources --pidfile '' --text '{{'
 ```
 
-6. Confirm startup fails with a fatal `--format` error.
+6. Confirm startup fails with a fatal template error.
+
+7. Start the program with a text template that fails during execution:
+
+```sh
+timeout 3s /tmp/waybar-pulseaudio-sources --pidfile '' --text '{{.Description}}'
+```
+
+8. Confirm stdout contains a JSON object whose `text` field is `Error`, whose `class` field is `error`, and whose `tooltip` field contains the template error detail.
+
+9. Start the program with an empty text template:
+
+```sh
+/tmp/waybar-pulseaudio-sources --pidfile '' --text ''
+```
+
+10. Confirm startup fails with a fatal template error.
 
 # Invalid Default Pidfile Directory
 
@@ -223,10 +239,10 @@ original_source=$(pactl get-default-source)
 printf '%s\n' "$original_source"
 ```
 
-2. Start the program with a pidfile:
+2. Start the program with a pidfile and a template that exposes source state data:
 
 ```sh
-/tmp/waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sources-test.pid
+/tmp/waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sources-test.pid --text '{{.Muted}}|{{.State}}|{{.Available}}' --class '{{.State}}'
 ```
 
 3. Change the default source using `pactl` or `pavucontrol`.
@@ -242,7 +258,7 @@ printf '%s\n' "$event_source"
 printf '%s\n' "$event_source_mute"
 ```
 
-6. Confirm the `class` changes between `source` and `muted`.
+6. Confirm the rendered text changes from `false||true` when unmuted to `true|muted|true` when muted. Confirm the `class` field is omitted when unmuted and changes to `muted` when muted.
 
 7. Restore the muted source's original mute state and the original default source, then stop the test process:
 
@@ -304,10 +320,10 @@ rm -f "$pidfile"
 This test interrupts PulseAudio availability.
 It may interrupt desktop audio and may not restore cleanly. Do not run it during routine validation; run it only when intentionally testing PulseAudio recovery.
 
-1. Start the program with a pidfile:
+1. Start the program with a pidfile and a template that exposes unavailable-state data:
 
 ```sh
-/tmp/waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sources-test.pid
+/tmp/waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sources-test.pid --text '{{.Index}}|{{.State}}|{{.Available}}' --class '{{.State}}' --tooltip '{{.Desc}}'
 ```
 
 2. Stop or restart PulseAudio/PipeWire PulseAudio compatibility in the local user session.
@@ -315,7 +331,7 @@ It may interrupt desktop audio and may not restore cleanly. Do not run it during
 3. Confirm the program emits unavailable status:
 
 ```json
-{"text":"Unavailable ","tooltip":"...","class":"unavailable"}
+{"text":"-1|unavailable|false","tooltip":"...","class":"unavailable"}
 ```
 
 4. Restore PulseAudio availability.

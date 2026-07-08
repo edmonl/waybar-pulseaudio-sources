@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/edmonl/waybar-pulseaudio-sources/pulse"
+	"github.com/edmonl/waybar-pulseaudio-sources/waybar"
 )
 
 const (
@@ -27,24 +28,37 @@ func main() {
 	log.SetFlags(0)
 	log.SetPrefix("waybar-pulseaudio-sources: ")
 
-	pidfile := parsePidfile()
-	if pidfile != "" {
-		removePIDFile, err := writePIDFile(pidfile)
+	options := parseOptions()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx, options); err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatal(err)
+	}
+}
+
+type options struct {
+	pidfile string
+	text    string
+	class   string
+	tooltip string
+}
+
+func run(ctx context.Context, options options) error {
+	formatter, err := waybar.NewFormatter(options.text, options.class, options.tooltip)
+	if err != nil {
+		return err
+	}
+
+	if options.pidfile != "" {
+		removePIDFile, err := writePIDFile(options.pidfile)
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer removePIDFile()
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	if err := run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		log.Fatal(err)
-	}
-}
-
-func run(ctx context.Context) error {
 	output := newJSONWriter(os.Stdout)
 
 	userSignal := make(chan os.Signal, 1)
@@ -54,7 +68,7 @@ func run(ctx context.Context) error {
 	pendingCycle := false
 	for {
 		var err error
-		pendingCycle, err = runPulse(ctx, output, userSignal, pendingCycle)
+		pendingCycle, err = runPulse(ctx, output, userSignal, pendingCycle, formatter)
 		if err != nil {
 			return err
 		}
@@ -68,13 +82,13 @@ func run(ctx context.Context) error {
 	}
 }
 
-func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Signal, pendingCycle bool) (bool, error) {
+func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Signal, pendingCycle bool, formatter *waybar.Formatter) (bool, error) {
 	client, err := pulse.NewClient(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return pendingCycle, err
 		}
-		return pendingCycle, output.Emit(waybarUnavailable(err))
+		return pendingCycle, output.Emit(formatter.Unavailable(err))
 	}
 	defer client.Close()
 
@@ -88,11 +102,11 @@ func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Sign
 				if errors.Is(err, context.Canceled) {
 					return pendingCycle, err
 				}
-				if e := output.EmitIfChanged(waybarError(err)); e != nil {
+				if e := output.EmitIfChanged(formatter.Error(err)); e != nil {
 					return pendingCycle, e
 				}
 			} else {
-				state, err := getWaybarOutput(client)
+				state, err := getWaybarOutput(client, formatter)
 				if err != nil {
 					return pendingCycle, err
 				}
@@ -103,7 +117,7 @@ func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Sign
 
 			pendingCycle = false
 		} else {
-			state, err := getWaybarOutput(client)
+			state, err := getWaybarOutput(client, formatter)
 			if err != nil {
 				return pendingCycle, err
 			}
@@ -119,7 +133,7 @@ func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Sign
 			if errors.Is(err, context.Canceled) {
 				return pendingCycle, err
 			}
-			return pendingCycle, output.Emit(waybarUnavailable(err))
+			return pendingCycle, output.Emit(formatter.Unavailable(err))
 		case <-userSignal:
 			pendingCycle = true
 		case <-changes:
@@ -127,16 +141,16 @@ func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Sign
 	}
 }
 
-func getWaybarOutput(client *pulse.Client) (any, error) {
+func getWaybarOutput(client *pulse.Client, formatter *waybar.Formatter) (waybar.Output, error) {
 	source, err := client.DefaultSource()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return nil, err
+			return waybar.Output{}, err
 		}
-		return waybarError(err), nil
+		return formatter.Error(err), nil
 	}
 
-	return waybarState(source), nil
+	return formatter.State(source), nil
 }
 
 func watchPulse(client *pulse.Client) (<-chan struct{}, <-chan error, func()) {
@@ -196,11 +210,46 @@ func waitForReconnect(ctx context.Context, userSignal <-chan os.Signal) (bool, e
 	}
 }
 
-func parsePidfile() string {
+func parseOptions() options {
 	var pidfile string
+
+	opts := options{
+		text:    "{{or (.State | capitalize) (print .Volume `%`)}}",
+		class:   "{{.State}}",
+		tooltip: "{{.Desc}}",
+	}
+	flag.Usage = usage
 	flag.StringVar(&pidfile, "pidfile", "", "write the process ID to this file; empty disables the pidfile")
+	flag.StringVar(&opts.text, "text", opts.text, "Go template for Waybar text")
+	flag.StringVar(&opts.class, "class", opts.class, "Go template for Waybar class")
+	flag.StringVar(&opts.tooltip, "tooltip", opts.tooltip, "Go template for Waybar tooltip")
 	flag.Parse()
 
+	opts.pidfile = parsePidfile(pidfile)
+	return opts
+}
+
+func usage() {
+	output := flag.CommandLine.Output()
+	fmt.Fprintln(output, "A long-running Waybar custom module for PulseAudio input sources.")
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "Template fields for -text, -class, and -tooltip:")
+	fmt.Fprintln(output, "  Index   PulseAudio runtime source index, or -1 when no source is available")
+	fmt.Fprintln(output, "  Name    PulseAudio source name")
+	fmt.Fprintln(output, "  Desc    PulseAudio source description, or error detail when no source is available")
+	fmt.Fprintln(output, "  Muted   whether the source is muted")
+	fmt.Fprintln(output, "  Volume  unclamped average channel volume percentage")
+	fmt.Fprintln(output, "  State   empty for a healthy unmuted source, or muted, unavailable, error")
+	fmt.Fprintln(output, "  Available  whether source data is available")
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "Template functions:")
+	fmt.Fprintln(output, "  capitalize  uppercase the first character of a string")
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "Flags:")
+	flag.PrintDefaults()
+}
+
+func parsePidfile(pidfile string) string {
 	if pidfile == "" {
 		pidfileDisabled := false
 		flag.Visit(func(f *flag.Flag) {

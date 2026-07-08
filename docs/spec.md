@@ -41,37 +41,35 @@ The program writes its PID to a pidfile on startup and removes the pidfile on ex
 # Display Behavior
 
 The program avoids writing duplicate JSON lines when multiple PulseAudio events produce the same rendered state.
-The module text is rendered from the default PulseAudio source with a Go `text/template`.
-The default template is `{{.Volume}}%`.
-The `--format` flag overrides this template. Templates may use these fields:
+The Waybar `text`, `class`, and `tooltip` fields are rendered with Go `text/template` templates. The `--text`, `--class`, and `--tooltip` flags override those templates.
 
-1. `Name`: PulseAudio source name.
-2. `Desc`: human-readable PulseAudio source description.
-3. `Muted`: whether the source is muted.
-4. `Volume`: unclamped average channel volume percentage.
+Each template receives data with these fields:
 
-Empty format values and invalid templates are fatal startup errors.
-The template applies only to the Waybar `text` field, not the tooltip.
+1. `Index`: PulseAudio runtime source index, or `-1` when no source is available.
+2. `Name`: PulseAudio source name.
+3. `Desc`: human-readable PulseAudio source description, or error detail when no source is available.
+4. `Muted`: whether the source is muted.
+5. `Volume`: unclamped average channel volume percentage.
+6. `State`: `""` for a healthy unmuted source, `muted`, `unavailable`, or `error`.
+7. `Available`: whether source data is available.
 
-The tooltip shows the default source's human-readable name.
+For available source data, `Available` is `true`, `Index`, `Name`, `Desc`, `Muted`, and `Volume` describe the default source, and `State` is `""` for an unmuted source or `muted` for a muted source.
 
-Source-status JSON output includes `text`, `tooltip`, `class`, and `percentage`.
+For PulseAudio availability failures, `Available` is `false`, `Index` is `-1`, `Name` is `""`, `Desc` contains the availability error detail, `Muted` is `false`, `Volume` is `0`, and `State` is `unavailable`.
 
-The `percentage` value is the unclamped PulseAudio average channel volume percentage. It may exceed 100.
+For operation failures that are not availability failures, `Available` is `false`, `Index` is `-1`, `Name` is `""`, `Desc` contains the operation error detail, `Muted` is `false`, `Volume` is `0`, and `State` is `error`.
+
+Empty template values and malformed templates are fatal startup errors. Template execution errors emit formatter-error JSON with the error detail in the tooltip.
+
+Templates may use `capitalize` to uppercase the first character of a string.
+
+Normal source-status JSON output includes `text` and `percentage`. The `class` field is present only when the rendered class is non-empty. The `tooltip` field is present only when the rendered tooltip is non-empty.
+
+The `percentage` value is the unclamped PulseAudio average channel volume percentage. It may exceed 100. Unavailable, operation-error, and template-execution-error JSON output omits `percentage`.
 
 If PulseAudio is unavailable, the program emits unavailable status and retries connection after a long delay. The delay should avoid tight reconnect loops because PulseAudio is usually not restored immediately.
 
 `SIGUSR1` always represents a source cycling request. If PulseAudio is unavailable when the signal is received, the program records the pending cycling request, retries connection immediately, and applies the cycle after reconnecting.
-
-```json
-{"text":"Unavailable ","tooltip":"...","class":"unavailable"}
-```
-
-Operation failures that are not availability failures use error status:
-
-```json
-{"text":"Error ","tooltip":"...","class":"error"}
-```
 
 # Source Switching
 
@@ -80,6 +78,7 @@ On `SIGUSR1`, the program selects the next available PulseAudio source and sets 
 Sources whose PulseAudio name ends with `.monitor` are excluded from display and source switching.
 
 Source switching uses ascending PulseAudio source index order. PulseAudio source indexes are runtime identifiers and are not expected to be stable across PulseAudio server restarts.
+If only one eligible source is available, source switching selects that same source again.
 
 Changing the default source primarily affects new recording streams. Existing recording streams may continue using their current source unless the application or PulseAudio policy explicitly moves them.
 
