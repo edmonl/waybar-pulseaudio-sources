@@ -236,9 +236,12 @@ func switchSource(pidfile string) error {
 }
 
 func writePIDFile(path string) (func(), error) {
+	if err := checkReusablePIDFile(path); err != nil {
+		return nil, err
+	}
 	pid := strconv.Itoa(os.Getpid())
 	if err := os.WriteFile(path, []byte(pid+"\n"), 0o644); err != nil {
-		return nil, fmt.Errorf("write pidfile: %w", err)
+		return nil, fmt.Errorf("failed to write pidfile %v: %w", path, err)
 	}
 
 	return func() {
@@ -250,4 +253,25 @@ func writePIDFile(path string) (func(), error) {
 			os.Remove(path)
 		}
 	}, nil
+}
+
+func checkReusablePIDFile(path string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("failed to read pidfile %v: %w", path, err)
+	}
+
+	pid, err := strconv.Atoi(strings.TrimSpace(string(content)))
+	if err != nil || pid <= 0 {
+		return nil
+	}
+
+	if err := syscall.Kill(pid, 0); err == nil || errors.Is(err, syscall.EPERM) {
+		return fmt.Errorf("pidfile %v is already used by process %v", path, pid)
+	}
+
+	return nil
 }
