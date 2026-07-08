@@ -104,7 +104,13 @@ func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Sign
 				if errors.Is(err, context.Canceled) {
 					return pendingCycle, err
 				}
-				if e := output.EmitIfChanged(formatter.Error(err)); e != nil {
+				var state waybar.Output
+				if errors.Is(err, pulse.ErrNoInputSource) {
+					state = formatter.Unavailable(err)
+				} else {
+					state = formatter.Error(err)
+				}
+				if e := output.EmitIfChanged(state); e != nil {
 					return pendingCycle, e
 				}
 			} else {
@@ -148,6 +154,9 @@ func getWaybarOutput(client *pulse.Client, formatter *waybar.Formatter) (waybar.
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return waybar.Output{}, err
+		}
+		if errors.Is(err, pulse.ErrNoInputSource) {
+			return formatter.Unavailable(err), nil
 		}
 		return formatter.Error(err), nil
 	}

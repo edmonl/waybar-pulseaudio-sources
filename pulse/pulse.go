@@ -15,6 +15,10 @@ import (
 	"sync"
 )
 
+// ErrNoInputSource reports that PulseAudio has no input source this module can
+// display or switch to.
+var ErrNoInputSource = errors.New("no input source available")
+
 // Source is a PulseAudio source as seen by this program.
 type Source struct {
 	// Index is the PulseAudio runtime source index.
@@ -167,7 +171,7 @@ func (c *Client) pulseError(pulseErr C.pulse_error_t) error {
 	case C.PULSE_ERROR_SOURCE_LIST:
 		message = "failed to get PulseAudio source list"
 	case C.PULSE_ERROR_NO_SOURCES:
-		message = "no PulseAudio sources available"
+		return ErrNoInputSource
 	case C.PULSE_ERROR_DEFAULT_SOURCE:
 		message = "failed to get PulseAudio default source"
 	case C.PULSE_ERROR_SET_DEFAULT_SOURCE:

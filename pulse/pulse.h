@@ -37,6 +37,11 @@ typedef struct {
   bool mute;
 } pulse_source_t;
 
+typedef struct {
+  uint32_t index;
+  char *name;
+} pulse_source_ref_t;
+
 pulse_client_t *pulse_client_new(void);
 void pulse_client_free(pulse_client_t *client);
 pulse_error_t pulse_client_start(pulse_client_t *client);
@@ -47,6 +52,9 @@ pulse_source_t *pulse_get_default_source(pulse_client_t *client,
                                          pulse_error_t *error);
 pulse_error_t pulse_cycle_default_source(pulse_client_t *client);
 pulse_error_t pulse_wait_for_change(pulse_client_t *client);
+
+const pulse_source_ref_t *pulse_select_next_source(
+    const pulse_source_ref_t *sources, int count, const char *default_source_name);
 
 /*
  * Permanently shuts down the client and wakes its blocking operations.

@@ -245,10 +245,6 @@ static bool source_is_monitor(const char *name) {
   return name_len >= 8 && strcmp(name + name_len - 8, ".monitor") == 0;
 }
 
-static bool ignore_source(const pa_source_info *source) {
-  return !source || !source->name || source_is_monitor(source->name);
-}
-
 static void source_free_fields(pulse_source_t *source) {
   free(source->name);
   free(source->description);
@@ -283,11 +279,6 @@ static bool source_copy(pulse_source_t *source, const pa_source_info *info) {
 /**
  * source: snapshot
  */
-typedef struct {
-  uint32_t index;
-  char *name;
-} pulse_source_ref_t;
-
 typedef struct {
   pulse_source_ref_t *sources;
   char *default_source_name;
@@ -387,7 +378,7 @@ static void source_info_cb(pa_context *context, const pa_source_info *info,
     return;
   }
 
-  if (ignore_source(info)) {
+  if (!info || !info->name) {
     return;
   }
 
@@ -482,7 +473,7 @@ static pulse_error_t get_default_source(pulse_client_t *client, void *out) {
   }
   if (source_is_monitor(default_source_name)) {
     free(default_source_name);
-    return error_with_code(PULSE_ERROR_DEFAULT_SOURCE, NULL);
+    return error_with_code(PULSE_ERROR_NO_SOURCES, NULL);
   }
 
   default_source_data_t data;
@@ -545,7 +536,57 @@ static pulse_error_t wait_for_change(pulse_client_t *client, void *data) {
 /**
  * next source
  */
-static pulse_error_t set_next_source_default(pulse_client_t *client, void *data) {
+const pulse_source_ref_t *
+pulse_select_next_source(const pulse_source_ref_t *sources, int count,
+                         const char *default_source_name) {
+  const pulse_source_ref_t *first = NULL;
+  const pulse_source_ref_t *current = NULL;
+  for (int i = 0; i < count; ++i) {
+    const pulse_source_ref_t *source = &sources[i];
+    if (!source->name) {
+      continue;
+    }
+
+    if (strcmp(source->name, default_source_name) == 0) {
+      current = source;
+    }
+
+    if (source_is_monitor(source->name)) {
+      continue;
+    }
+    if (!first || source->index < first->index) {
+      first = source;
+    }
+  }
+
+  if (!first) {
+    return NULL;
+  }
+
+  if (!current) {
+    return first;
+  }
+
+  const pulse_source_ref_t *next = NULL;
+  for (int i = 0; i < count; ++i) {
+    const pulse_source_ref_t *source = &sources[i];
+    if (!source->name || source_is_monitor(source->name)) {
+      continue;
+    }
+    if (source->index > current->index &&
+        (!next || source->index < next->index)) {
+      next = source;
+    }
+  }
+  if (!next) {
+    return first;
+  }
+
+  return next;
+}
+
+static pulse_error_t set_next_source_default(pulse_client_t *client,
+                                             void *data) {
   (void)data;
 
   pulse_error_t error;
@@ -553,38 +594,11 @@ static pulse_error_t set_next_source_default(pulse_client_t *client, void *data)
   if (!snapshot) {
     return error;
   }
-  if (snapshot->count == 0) {
+  const pulse_source_ref_t *next = pulse_select_next_source(
+      snapshot->sources, snapshot->count, snapshot->default_source_name);
+  if (!next) {
     snapshot_free(snapshot);
     return error_with_code(PULSE_ERROR_NO_SOURCES, NULL);
-  }
-
-  pulse_source_ref_t *first = &snapshot->sources[0];
-  pulse_source_ref_t *current = NULL;
-  for (int i = 0; i < snapshot->count; ++i) {
-    pulse_source_ref_t *source = &snapshot->sources[i];
-    if (source->index < first->index) {
-      first = source;
-    }
-    if (strcmp(source->name, snapshot->default_source_name) == 0) {
-      current = source;
-    }
-  }
-
-  if (!current) {
-    snapshot_free(snapshot);
-    return error_with_code(PULSE_ERROR_DEFAULT_SOURCE, NULL);
-  }
-
-  pulse_source_ref_t *next = NULL;
-  for (int i = 0; i < snapshot->count; ++i) {
-    pulse_source_ref_t *source = &snapshot->sources[i];
-    if (source->index > current->index &&
-        (!next || source->index < next->index)) {
-      next = source;
-    }
-  }
-  if (!next) {
-    next = first;
   }
 
   error = set_default_source(client, next->name);

@@ -55,9 +55,9 @@ Each template receives data with these fields:
 
 For available source data, `Available` is `true`, `Index`, `Name`, `Desc`, `Muted`, and `Volume` describe the default source, and `State` is `""` for an unmuted source or `muted` for a muted source.
 
-For PulseAudio availability failures, `Available` is `false`, `Index` is `-1`, `Name` is `""`, `Desc` contains the availability error detail, `Muted` is `false`, `Volume` is `0`, and `State` is `unavailable`.
+For PulseAudio availability failures and cases where no eligible input source is available, `Available` is `false`, `Index` is `-1`, `Name` is `""`, `Desc` contains the status detail, `Muted` is `false`, `Volume` is `0`, and `State` is `unavailable`.
 
-For operation failures that are not availability failures, `Available` is `false`, `Index` is `-1`, `Name` is `""`, `Desc` contains the operation error detail, `Muted` is `false`, `Volume` is `0`, and `State` is `error`.
+For other operation failures, `Available` is `false`, `Index` is `-1`, `Name` is `""`, `Desc` contains the operation error detail, `Muted` is `false`, `Volume` is `0`, and `State` is `error`.
 
 Empty template values and malformed templates are fatal startup errors. Template execution errors emit formatter-error JSON with the error detail in the tooltip.
 
@@ -73,11 +73,11 @@ If PulseAudio is unavailable, the program emits unavailable status and retries c
 
 # Source Switching
 
-On `SIGUSR1`, the program selects the next available PulseAudio source and sets it as the default source. Reconnection is a prerequisite for this operation when PulseAudio is unavailable.
+On `SIGUSR1`, the program selects the next eligible input source and sets it as the default source. Reconnection is a prerequisite for this operation when PulseAudio is unavailable.
 
 The `switch` subcommand accepts `--pidfile` to match a long-running process started with a non-default pidfile. An explicit empty `--pidfile` value is invalid for `switch` because there is no process ID to read.
 
-Sources whose PulseAudio name ends with `.monitor` are excluded from display and source switching.
+Sources whose PulseAudio name ends with `.monitor` are excluded from display and are never selected by source switching. When the current default source is a monitor source, source switching may use it as the ordering anchor before selecting the next non-monitor source.
 
 Source switching uses ascending PulseAudio source index order. PulseAudio source indexes are runtime identifiers and are not expected to be stable across PulseAudio server restarts.
 If only one eligible source is available, source switching selects that same source again.

@@ -141,7 +141,7 @@ With the defaults, the module:
 
 Clicking the module, as configured in [Quick Start](#quick-start), runs `waybar-pulseaudio-sources switch`. This reads the pidfile for the running module and sends it `SIGUSR1`. The running module then switches the system default to the next source.
 
-Sources whose names end with `.monitor` are ignored. Source switching follows ascending PulseAudio source index order. These indexes are runtime identifiers, so the order can change after PulseAudio restarts.
+Sources whose names end with `.monitor` are not displayed or selected. Source switching follows ascending PulseAudio source index order. These indexes are runtime identifiers, so the order can change after PulseAudio restarts.
 
 Changing the default source mainly affects new recording streams. Existing applications may keep using their current input source unless the application or PulseAudio policy moves them.
 
