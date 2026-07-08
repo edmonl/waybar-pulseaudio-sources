@@ -1,24 +1,28 @@
-A Waybar custom module for showing and setting PulseAudio input sources.
+A Waybar custom module for showing and changing the default PulseAudio input source, such as a microphone.
 
-The module prints Waybar-compatible JSON updates as PulseAudio state changes. It shows the default source volume, uses the source description as the tooltip, and can switch to the next available input source.
+By default, the module shows the default source volume in Waybar, uses the source description as the tooltip, and can switch to the next non-monitor input source. It works with PulseAudio-compatible servers, including PipeWire's PulseAudio server.
+
+![Waybar module showing microphone volume and icon](screenshot.png)
 
 # Quick Start
 
- Edit Waybar config (e.g. `~/.config/waybar/config.jsonc`) to add the custom module:
+Add the custom module to your Waybar config, for example `~/.config/waybar/config.jsonc`:
 
 ```json
 "custom/pulseaudio-sources": {
-	"exec": "exec waybar-pulseaudio-sources --text '{{if .Available}}{{.Volume}}%{{else}}{{capitalize .State}}{{end}}{{if .Muted}}{{else}}{{end}}'",
-	"on-click": "waybar-pulseaudio-sources switch",
-	"exec-on-event": false,
-	"return-type": "json",
-	"restart-interval": 300
+    "exec": "waybar-pulseaudio-sources",
+    "on-click": "waybar-pulseaudio-sources switch",
+    "exec-on-event": false,
+    "return-type": "json",
+    "restart-interval": 300
 }
 ```
-The above example shows customized text using unicode emojis. Make sure you have the proper font if you copy it literally.
-If the executable binary is not in PATH, make sure to specify the path e.g. `~/.local/bin/waybar-pulseaudio-sources`.
 
-Then include `custom/pulseaudio-sources` in one of Waybar's module lists. for example:
+If the executable is not on `PATH`, use its full path, for example `~/.local/bin/waybar-pulseaudio-sources`.
+This module is intended to keep running. It keeps watching PulseAudio state changes.
+Thus `exec-on-event` must be `false` so Waybar does not restart the module for click events. `restart-interval` lets Waybar start it again if it exits.
+
+Then include `custom/pulseaudio-sources` in one of Waybar's module lists:
 
 ```json
 "modules-right": [
@@ -26,31 +30,53 @@ Then include `custom/pulseaudio-sources` in one of Waybar's module lists. for ex
 ]
 ```
 
-Restart Waybar after changing the config.
+Optionally customize the appearance in Waybar CSS, for example `~/.config/waybar/style.css`:
 
-# Build
-
-Go, `pkg-config`, `build-essentials`, and the PulseAudio development headers re required to build from source.
-
-On Debian or Ubuntu, the build dependencies are typically:
-
-```sh
-sudo apt install golang pkg-config libpulse-dev
+```css
+#custom-pulseaudio-sources {
+    background-color: #f1c40f;
+    color: #000000;
+    padding: 0 10px;
+}
 ```
 
-On Fedora, they are typically:
+Restart Waybar.
+
+# Installation
+
+## System Dependencies
+
+Besides Go, building requires `pkg-config`, a C build toolchain for `cgo`, and the PulseAudio development headers.
+
+On Debian or Ubuntu:
 
 ```sh
-sudo dnf install golang pkgconf-pkg-config pulseaudio-libs-devel
+sudo apt install build-essential pkg-config libpulse-dev
 ```
 
-Build and install from the project directory:
+On Fedora:
+
+```sh
+sudo dnf install gcc pkgconf-pkg-config pulseaudio-libs-devel
+```
+
+## Install With Go
+
+Install the latest version from the module path:
+
+```sh
+go install github.com/edmonl/waybar-pulseaudio-sources@latest
+```
+
+Make sure Go's install directory is on your `PATH` if you do not use the full binary path in your Waybar config.
+
+## Build From Local Checkout
+
+From the project directory:
 
 ```sh
 go install
 ```
-
-Make sure Go's install directory is on your `PATH`.
 
 You can also build a local binary:
 
@@ -60,44 +86,58 @@ go build
 
 Then place the binary somewhere Waybar can execute it, such as `~/.local/bin`.
 
+# Display Templates
 
-# Display templates
+The Waybar `text`, `class`, and `tooltip` fields are rendered with Go `text/template` templates. Override them with `--text`, `--class`, and `--tooltip`:
 
-The source text can be customized with `--text`, which accepts a Go `text/template`.
-The default text template is:
-
-```gotemplate
-{{if .State}}{{capitalize .State}} {{else}}{{.Volume}}%{{end}}
+```json
+"custom/pulseaudio-sources": {
+    "exec": "waybar-pulseaudio-sources --text '{{if .Available}}{{.Volume}}% {{if .Muted}}{{else}}{{end}}{{else}}{{capitalize .State}}{{end}}'",
+    "on-click": "waybar-pulseaudio-sources switch",
+    "exec-on-event": false,
+    "return-type": "json",
+    "restart-interval": 300
+}
 ```
 
-The template may use these fields:
+The icon glyphs in this example require a font that can render them properly.
+
+Templates receive these fields:
 
 1. `Index`: PulseAudio runtime source index, or `-1` when no source is available.
 2. `Name`: PulseAudio source name.
 3. `Desc`: human-readable PulseAudio source description, or error detail when no source is available.
 4. `Muted`: whether the source is muted.
 5. `Volume`: unclamped average channel volume percentage.
-6. `State`: `""` for a healthy unmuted source, `muted`, `unavailable`, or `error`.
+6. `State`: empty for a healthy unmuted source, or `muted`, `unavailable`, or `error`.
 7. `Available`: whether source data is available.
 
-The template may also use `capitalize`, which uppercases the first character of a string.
+Templates may also use `capitalize`, which uppercases the first character of a string.
 
 Empty template values and malformed templates cause startup to fail. Template execution errors produce error output with the error detail in the tooltip.
 
-The Waybar class and tooltip can also be customized:
+The default templates are:
 
-```json
-"exec": "waybar-pulseaudio-sources --class '{{.State}}' --tooltip '{{.Desc}}'"
+```sh
+--text '{{or (.State | capitalize) (print .Volume `%`)}}'
+--class '{{.State}}'
+--tooltip '{{.Desc}}'
 ```
 
-The default class is omitted for a healthy unmuted source and is `muted`, `unavailable`, or `error` otherwise.
-The default tooltip is `Desc`, which is the human-readable source name reported by PulseAudio or the error detail for unavailable/error states.
+With the defaults, the module:
 
-Clicking the module runs `waybar-pulseaudio-sources switch`, which asks the running process to select the next non-monitor source and set it as the default PulseAudio source. Monitor sources ending in `.monitor` are ignored.
+1. Shows the volume percentage for an available, unmuted source.
+2. Shows `Muted`, `Unavailable`, or `Error` when those states apply.
+3. Omits the Waybar class for a healthy unmuted source and uses `muted`, `unavailable`, or `error` otherwise.
+4. Uses the PulseAudio source description, or the error detail, as the tooltip.
 
-Source switching follows PulseAudio source index order. These indexes are runtime identifiers, so the order can change after PulseAudio restarts.
+# Source Switching
 
-Changing the default source mainly affects new recording streams. Applications that are already recording may keep using their current source until they are restarted or moved by PulseAudio policy.
+Clicking the module, as configured in [Quick Start](#quick-start), runs `waybar-pulseaudio-sources switch`. This reads the pidfile for the running module and sends it `SIGUSR1`. The running module then switches the system default to the next source.
+
+Sources whose names end with `.monitor` are ignored. Source switching follows ascending PulseAudio source index order. These indexes are runtime identifiers, so the order can change after PulseAudio restarts.
+
+Changing the default source mainly affects new recording streams. Existing applications may keep using their current input source unless the application or PulseAudio policy moves them.
 
 # Pidfile
 
@@ -107,36 +147,42 @@ By default, the module writes its process ID to:
 $XDG_RUNTIME_DIR/waybar-pulseaudio-sources.pid
 ```
 
-This is what the `switch` subcommand uses to find the running process.
+The `switch` subcommand uses this file to find the running module. Make sure Waybar starts with `XDG_RUNTIME_DIR` set to an absolute path.
 
-You can override the pidfile path:
+You may override the pidfile path when starting the module:
 
 ```json
 "exec": "waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sources.pid"
 ```
 
-You can disable pidfile output by passing an explicit empty value:
+Use the same pidfile for the click action:
+
+```json
+"on-click": "waybar-pulseaudio-sources switch --pidfile /tmp/waybar-pulseaudio-sources.pid"
+```
+
+Relative pidfile paths are resolved against the current working directory, which is useful for debugging. When pidfile is enabled (by default), the pidfile directory must exist. An existing pidfile is overwritten only when it does not contain a live process ID. The module removes its pidfile when it exits cleanly and the file still contains its own process ID.
+
+You can disable pidfile by passing an explicit empty value:
 
 ```json
 "exec": "waybar-pulseaudio-sources --pidfile ''"
 ```
 
-If pidfile output is enabled, the pidfile directory must already exist. The module removes its pidfile when it exits cleanly.
+Disabling pidfile makes `waybar-pulseaudio-sources switch` not work, because the switch command needs a pidfile to find the running process.
 
-# Waybar custom module contract
+# Waybar Output
 
-The program writes newline-delimited JSON to stdout for Waybar. A typical update looks like:
+The module writes newline-delimited JSON to stdout for Waybar. A typical update looks like:
 
 ```json
 {"text":"65%","tooltip":"Microphone Name","percentage":65}
 ```
 
-The `percentage` value is the PulseAudio average channel volume percentage and may be greater than 100.
+The `percentage` value is the unclamped PulseAudio average channel volume percentage and may be greater than 100. Unavailable and error output has no `percentage`.
 
 # Troubleshooting
 
-1. If the module does not appear, run `waybar-pulseaudio-sources` in a terminal and check for errors.
-2. If Waybar logs mention `XDG_RUNTIME_DIR`, make sure Waybar starts with that environment variable set to an absolute path.
-3. Check that the pidfile exists and contains a running process ID when click action is used.
-5. If source switching works but an application keeps using the old microphone, restart that application or move the stream in your audio control tool.
-
+1. Run `waybar-pulseaudio-sources` in a terminal and check stderr for startup or PulseAudio errors.
+2. If click switching does not work, confirm the pidfile exists and contains the process ID of the running module.
+3. If switching works but an application keeps using the old input source, check that application's input-source configuration or restart the application.
