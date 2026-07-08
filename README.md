@@ -1,5 +1,7 @@
 ## Overview
 
+[![CI](https://github.com/edmonl/waybar-pulseaudio-sources/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/edmonl/waybar-pulseaudio-sources/actions/workflows/ci.yml)
+
 A Waybar custom module for showing and changing the default PulseAudio input source, such as a microphone.
 ![Waybar module showing microphone volume and icon](screenshot.png)
 
