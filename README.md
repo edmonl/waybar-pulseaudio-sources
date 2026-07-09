@@ -92,6 +92,9 @@ go build
 
 Then place the binary somewhere Waybar can execute it, such as `~/.local/bin`.
 
+### Build Release
+Add flags `-ldflags='-s -w' -trimpath` to the install/build commands.
+
 ## Display Templates
 
 The Waybar `text`, `class`, and `tooltip` fields are rendered with Go `text/template` templates. Override them with `--text`, `--class`, and `--tooltip`:
