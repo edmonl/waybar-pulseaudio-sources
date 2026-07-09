@@ -5,20 +5,20 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/edmonl/waybar-pulseaudio-sources/daemonutil/runtimepath"
 )
 
-const pidfileName = "waybar-pulseaudio-sources.pid"
+const socketName = "waybar-pulseaudio-sources.sock"
 
 // Command is a parsed top-level command invocation.
 type Command struct {
 	// SwitchSource reports whether the switch subcommand was selected.
 	SwitchSource bool
 
-	// Pidfile is the resolved pidfile path used by the selected command.
-	Pidfile string
+	// Sock is the resolved Unix socket path used by the selected command.
+	Sock string
 
 	// Text is the Go template for Waybar text.
 	Text string
@@ -33,13 +33,13 @@ type Command struct {
 // Parse parses top-level options and subcommands.
 func Parse(name string, args []string) (Command, error) {
 	if len(args) > 0 && args[0] == "switch" {
-		pidfile, err := parseSwitchOptions(name, args[1:])
+		sock, err := parseSwitchOptions(name, args[1:])
 		if err != nil {
 			return Command{}, err
 		}
 		return Command{
 			SwitchSource: true,
-			Pidfile:      pidfile,
+			Sock:         sock,
 		}, nil
 	}
 
@@ -56,7 +56,7 @@ func IsHelp(err error) bool {
 }
 
 func parseOptions(name string, args []string) (Command, error) {
-	var pidfile string
+	var sock string
 
 	command := Command{
 		Text:    "{{or (.State | capitalize) (print .Volume `%`)}}",
@@ -65,7 +65,7 @@ func parseOptions(name string, args []string) (Command, error) {
 	}
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.Usage = func() { usage(flags, name) }
-	flags.StringVar(&pidfile, "pidfile", "", "write the process ID to this file; empty disables the pidfile")
+	flags.StringVar(&sock, "sock", "", "path of Unix socket, disabled when empty")
 	flags.StringVar(&command.Text, "text", command.Text, "Go template for Waybar text")
 	flags.StringVar(&command.Class, "class", command.Class, "Go template for Waybar class")
 	flags.StringVar(&command.Tooltip, "tooltip", command.Tooltip, "Go template for Waybar tooltip")
@@ -76,20 +76,20 @@ func parseOptions(name string, args []string) (Command, error) {
 		return Command{}, fmt.Errorf("unknown argument: %v", flags.Arg(0))
 	}
 
-	resolvedPidfile, err := parsePidfile(flags, pidfile)
+	resolvedSock, err := parseSocketPath(flags, sock)
 	if err != nil {
 		return Command{}, err
 	}
-	command.Pidfile = resolvedPidfile
+	command.Sock = resolvedSock
 	return command, nil
 }
 
 func parseSwitchOptions(name string, args []string) (string, error) {
-	var pidfile string
+	var sock string
 
 	flags := flag.NewFlagSet(name+" switch", flag.ContinueOnError)
 	flags.Usage = func() { switchUsage(flags, name) }
-	flags.StringVar(&pidfile, "pidfile", "", "read the process ID from this file")
+	flags.StringVar(&sock, "sock", "", "Unix socket path")
 	if err := flags.Parse(args); err != nil {
 		return "", err
 	}
@@ -97,14 +97,14 @@ func parseSwitchOptions(name string, args []string) (string, error) {
 		return "", fmt.Errorf("unknown argument: %v", flags.Arg(0))
 	}
 
-	resolvedPidfile, err := parsePidfile(flags, pidfile)
+	resolvedSock, err := parseSocketPath(flags, sock)
 	if err != nil {
 		return "", err
 	}
-	if resolvedPidfile == "" {
-		return "", fmt.Errorf("--pidfile must not be empty")
+	if resolvedSock == "" {
+		return "", fmt.Errorf("--sock must not be empty")
 	}
-	return resolvedPidfile, nil
+	return resolvedSock, nil
 }
 
 func usage(flags *flag.FlagSet, name string) {
@@ -136,7 +136,7 @@ func usage(flags *flag.FlagSet, name string) {
 
 func switchUsage(flags *flag.FlagSet, name string) {
 	output := flags.Output()
-	fmt.Fprintln(output, "Signal the running module process to switch the default PulseAudio input source.")
+	fmt.Fprintln(output, "Ask the running module process to switch the default PulseAudio input source.")
 	fmt.Fprintln(output)
 	fmt.Fprintln(output, "Usage:")
 	fmt.Fprintf(output, "  %s switch [flags]\n", name)
@@ -145,41 +145,29 @@ func switchUsage(flags *flag.FlagSet, name string) {
 	flags.PrintDefaults()
 }
 
-func parsePidfile(flags *flag.FlagSet, pidfile string) (string, error) {
-	if pidfile == "" {
-		pidfileDisabled := false
+func parseSocketPath(flags *flag.FlagSet, sock string) (string, error) {
+	if sock == "" {
+		socketDisabled := false
 		flags.Visit(func(f *flag.Flag) {
-			if f.Name == "pidfile" {
-				pidfileDisabled = true
+			if f.Name == "sock" {
+				socketDisabled = true
 			}
 		})
-		if pidfileDisabled {
+		if socketDisabled {
 			return "", nil
 		}
 
-		runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
-		if runtimeDir == "" {
-			return "", fmt.Errorf("XDG_RUNTIME_DIR is empty and --pidfile was not provided")
-		}
-		if !filepath.IsAbs(runtimeDir) {
-			return "", fmt.Errorf("XDG_RUNTIME_DIR must be an absolute path")
-		}
-
-		return filepath.Join(runtimeDir, pidfileName), nil
-	}
-
-	pidfile = strings.TrimSpace(pidfile)
-	if pidfile == "" {
-		return "", fmt.Errorf("--pidfile must not be blank")
-	}
-
-	if !filepath.IsAbs(pidfile) {
-		cwd, err := os.Getwd()
+		path, err := runtimepath.RuntimeDirJoin(socketName)
 		if err != nil {
 			return "", err
 		}
-		pidfile = filepath.Join(cwd, pidfile)
+		return path, nil
 	}
 
-	return pidfile, nil
+	sock = strings.TrimSpace(sock)
+	if sock == "" {
+		return "", fmt.Errorf("--sock must not be blank")
+	}
+
+	return runtimepath.WorkingDirJoin(sock)
 }

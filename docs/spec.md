@@ -8,7 +8,7 @@ The program reports the current default PulseAudio source, updates Waybar when r
 
 The program requires a PulseAudio-compatible server and a Waybar configuration that runs it as a continuous custom module.
 
-When pidfile output is enabled, `$XDG_RUNTIME_DIR` must be set to an absolute path unless `--pidfile` provides an explicit path.
+The default control socket path is resolved from the runtime directory environment. `XDG_RUNTIME_DIR` is preferred, then `TMPDIR`, then `/tmp`. Environment-provided runtime directories must be absolute and must already exist.
 
 # Runtime Behavior
 
@@ -30,13 +30,17 @@ Example Waybar configuration:
 }
 ```
 
-Waybar starts the process through `exec`. Click handling runs `waybar-pulseaudio-sources switch`, which sends `SIGUSR1` to the running process.
+Waybar starts the process through `exec`. Click handling runs `waybar-pulseaudio-sources switch`, which sends a switch request to the running module process.
 
-The switch command reads the pidfile and signals the recorded process. If the pidfile is absent or the recorded process cannot be signaled, the switch command exits with an error.
+The long-running process listens for control requests on a Unix socket. The default socket path is `waybar-pulseaudio-sources.sock` inside the resolved runtime directory. The `--sock` flag may override this path. An explicit empty `--sock` value disables the control socket for the long-running command. Explicit socket paths are trimmed, and relative paths are resolved against the current working directory. Blank explicit socket values after trimming are invalid.
 
-The program writes its PID to a pidfile on startup and removes the pidfile on exit when pidfile output is enabled. The default pidfile is `$XDG_RUNTIME_DIR/waybar-pulseaudio-sources.pid`; `$XDG_RUNTIME_DIR` must be set to an absolute path. The `--pidfile` flag may override this path; an explicit empty value disables pidfile output. Explicit pidfile paths are trimmed, and relative paths are resolved against the current working directory. Blank explicit pidfile values after trimming are invalid. When pidfile output is enabled, failure to determine the default path or create/write the pidfile is a fatal startup error. The pidfile parent directory must already exist. An existing pidfile may be overwritten only when it does not contain a live process ID.
+The switch command exits successfully after sending the request. If the control socket cannot be reached, the switch command exits with an error.
 
-`restart-interval` lets Waybar restart the long-running process if it exits or crashes. It is intended for continuous custom modules and must not be used together with `interval`. The example uses 300 seconds. Fatal startup errors, such as pidfile write failure, are logged to stderr and exit; Waybar may retry them on this interval.
+The `switch` subcommand accepts `--sock` to match a long-running process started with a non-default socket. An explicit empty `switch --sock` value is invalid because the switch command needs a socket path.
+
+The socket parent directory must already exist. Startup fails if the socket path exists and is not a socket, or if another live endpoint already owns the socket path. If the socket path is stale, the program may replace it. The program removes its socket on clean exit when the path still belongs to the same module instance.
+
+`restart-interval` lets Waybar restart the long-running process if it exits or crashes. It is intended for continuous custom modules and must not be used together with `interval`. The example uses 300 seconds. Fatal startup errors are logged to stderr and exit; Waybar may retry them on this interval.
 
 # Display Behavior
 
@@ -69,13 +73,11 @@ The `percentage` value is the unclamped PulseAudio average channel volume percen
 
 If PulseAudio is unavailable, the program emits unavailable status and retries connection after a long delay. The delay should avoid tight reconnect loops because PulseAudio is usually not restored immediately.
 
-`SIGUSR1` always represents a source cycling request. If PulseAudio is unavailable when the signal is received, the program records the pending cycling request, retries connection immediately, and applies the cycle after reconnecting.
+A switch request always represents a source cycling request. If PulseAudio is unavailable when the request is received, the program records the pending switch request, retries connection immediately, and applies the cycle after reconnecting.
 
 # Source Switching
 
-On `SIGUSR1`, the program selects the next eligible input source and sets it as the default source. Reconnection is a prerequisite for this operation when PulseAudio is unavailable.
-
-The `switch` subcommand accepts `--pidfile` to match a long-running process started with a non-default pidfile. An explicit empty `--pidfile` value is invalid for `switch` because there is no process ID to read.
+On a switch request, the program selects the next eligible input source and sets it as the default source. Reconnection is a prerequisite for this operation when PulseAudio is unavailable.
 
 Sources whose PulseAudio name ends with `.monitor` are excluded from display and are never selected by source switching. When the current default source is a monitor source, source switching may use it as the ordering anchor before selecting the next non-monitor source.
 

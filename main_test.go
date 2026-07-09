@@ -1,142 +1,46 @@
 package main
 
 import (
-	"os"
-	"os/exec"
-	"os/signal"
+	"net"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
 
-func TestSwitchSourceRejectsMissingPIDFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "missing.pid")
+func TestSwitchSourceRejectsMissingSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.sock")
 
 	err := switchSource(path)
 	if err == nil {
-		t.Fatal("switchSource returned nil, want missing pidfile error")
+		t.Fatal("switchSource returned nil, want missing socket error")
 	}
-	if !strings.Contains(err.Error(), "read pidfile") {
-		t.Fatalf("switchSource error = %q, want read pidfile", err)
-	}
-}
-
-func TestSwitchSourceRejectsInvalidPID(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "invalid.pid")
-	if err := os.WriteFile(path, []byte("not-a-pid\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := switchSource(path)
-	if err == nil {
-		t.Fatal("switchSource returned nil, want invalid PID error")
-	}
-	if !strings.Contains(err.Error(), "invalid process ID") {
-		t.Fatalf("switchSource error = %q, want invalid process ID", err)
+	if !strings.Contains(err.Error(), "send switch command") {
+		t.Fatalf("switchSource error = %q, want send switch command", err)
 	}
 }
 
-func TestSwitchSourceSignalsPID(t *testing.T) {
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGUSR1)
-	defer signal.Stop(signals)
-
-	path := filepath.Join(t.TempDir(), "self.pid")
-	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+func TestSwitchSourceSendsDatagram(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	conn, err := net.ListenPacket("unixgram", path)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer conn.Close()
 
 	if err := switchSource(path); err != nil {
 		t.Fatalf("switchSource(%q) = %v, want nil", path, err)
 	}
 
-	select {
-	case signal := <-signals:
-		if signal != syscall.SIGUSR1 {
-			t.Fatalf("got signal %v, want %v", signal, syscall.SIGUSR1)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for SIGUSR1")
-	}
-}
-
-func TestSwitchSourceRejectsStalePID(t *testing.T) {
-	cmd := exec.Command(os.Args[0], "-test.run=TestStalePIDHelperProcess")
-	cmd.Env = append(os.Environ(), "WAYBAR_PULSEAUDIO_SOURCES_STALE_PID_HELPER=1")
-	if err := cmd.Start(); err != nil {
+	buffer := make([]byte, 1024)
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	stalePID := cmd.Process.Pid
-	if err := cmd.Wait(); err != nil {
-		t.Fatal(err)
-	}
-
-	path := filepath.Join(t.TempDir(), "stale.pid")
-	if err := os.WriteFile(path, []byte(strconv.Itoa(stalePID)+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := switchSource(path)
-	if err == nil {
-		t.Fatal("switchSource returned nil, want stale PID error")
-	}
-	if !strings.Contains(err.Error(), "signal process") {
-		t.Fatalf("switchSource error = %q, want signal process", err)
-	}
-}
-
-func TestStalePIDHelperProcess(t *testing.T) {
-	if os.Getenv("WAYBAR_PULSEAUDIO_SOURCES_STALE_PID_HELPER") != "1" {
-		return
-	}
-	os.Exit(0)
-}
-
-func TestWritePIDFileRejectsLivePID(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "live.pid")
-	oldContent := strconv.Itoa(os.Getpid()) + "\n"
-	if err := os.WriteFile(path, []byte(oldContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	removePIDFile, err := writePIDFile(path)
-	if err == nil {
-		removePIDFile()
-		t.Fatal("writePIDFile returned nil, want live PID error")
-	}
-	if !strings.Contains(err.Error(), "already used by process") {
-		t.Fatalf("writePIDFile error = %q, want live PID error", err)
-	}
-
-	content, err := os.ReadFile(path)
+	n, _, err := conn.ReadFrom(buffer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(content) != oldContent {
-		t.Fatalf("pidfile content = %q, want %q", string(content), oldContent)
-	}
-}
-
-func TestWritePIDFileOverwritesStalePID(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "stale.pid")
-	if err := os.WriteFile(path, []byte("99999999\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	removePIDFile, err := writePIDFile(path)
-	if err != nil {
-		t.Fatalf("writePIDFile(%q) = %v, want nil", path, err)
-	}
-	defer removePIDFile()
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(string(content)) != strconv.Itoa(os.Getpid()) {
-		t.Fatalf("pidfile content = %q, want current PID", string(content))
+	if string(buffer[:n]) != "switch" {
+		t.Fatalf("datagram = %q, want switch", string(buffer[:n]))
 	}
 }

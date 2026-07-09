@@ -139,43 +139,43 @@ With the defaults, the module:
 
 ## Source Switching
 
-Clicking the module, as configured in [Quick Start](#quick-start), runs `waybar-pulseaudio-sources switch`. This reads the pidfile for the running module and sends it `SIGUSR1`. The running module then switches the system default to the next source.
+Clicking the module, as configured in [Quick Start](#quick-start), runs `waybar-pulseaudio-sources switch`. This sends a switch request to the running module. The running module then switches the system default to the next source.
 
 Sources whose names end with `.monitor` are not displayed or selected. Source switching follows ascending PulseAudio source index order. These indexes are runtime identifiers, so the order can change after PulseAudio restarts.
 
 Changing the default source mainly affects new recording streams. Existing applications may keep using their current input source unless the application or PulseAudio policy moves them.
 
-## Pidfile
+## Control Socket
 
-By default, the module writes its process ID to:
+By default, the module listens for switch requests at:
 
 ```text
-$XDG_RUNTIME_DIR/waybar-pulseaudio-sources.pid
+$XDG_RUNTIME_DIR/waybar-pulseaudio-sources.sock
 ```
 
-The `switch` subcommand uses this file to find the running module. Make sure Waybar starts with `XDG_RUNTIME_DIR` set to an absolute path.
+If `XDG_RUNTIME_DIR` is empty, the default path falls back to `$TMPDIR/waybar-pulseaudio-sources.sock`, then `/tmp/waybar-pulseaudio-sources.sock`. Environment-provided runtime directories must be absolute and must already exist.
 
-You may override the pidfile path when starting the module:
+The `switch` subcommand uses the same default path. You may override the socket path when starting the module:
 
 ```json
-"exec": "waybar-pulseaudio-sources --pidfile /tmp/waybar-pulseaudio-sources.pid"
+"exec": "waybar-pulseaudio-sources --sock /tmp/waybar-pulseaudio-sources.sock"
 ```
 
-Use the same pidfile for the click action:
+Use the same socket for the click action:
 
 ```json
-"on-click": "waybar-pulseaudio-sources switch --pidfile /tmp/waybar-pulseaudio-sources.pid"
+"on-click": "waybar-pulseaudio-sources switch --sock /tmp/waybar-pulseaudio-sources.sock"
 ```
 
-Relative pidfile paths are resolved against the current working directory, which is useful for debugging. When pidfile is enabled (by default), the pidfile directory must exist. An existing pidfile is overwritten only when it does not contain a live process ID. The module removes its pidfile when it exits cleanly and the file still contains its own process ID.
+Relative socket paths are resolved against the current working directory, which is useful for debugging. The socket parent directory must already exist. Startup fails if another live module already owns the socket path. A stale socket path may be replaced.
 
-You can disable pidfile by passing an explicit empty value:
+You can disable the socket by passing an explicit empty value:
 
 ```json
-"exec": "waybar-pulseaudio-sources --pidfile ''"
+"exec": "waybar-pulseaudio-sources --sock ''"
 ```
 
-Disabling pidfile makes `waybar-pulseaudio-sources switch` not work, because the switch command needs a pidfile to find the running process.
+Disabling the socket makes `waybar-pulseaudio-sources switch` not work, because the switch command needs a socket to reach the running module.
 
 ## Waybar Output
 
@@ -190,7 +190,7 @@ The `percentage` value is the unclamped PulseAudio average channel volume percen
 ## Troubleshooting
 
 1. Run `waybar-pulseaudio-sources` in a terminal and check stderr for startup or PulseAudio errors.
-2. If click switching does not work, confirm the pidfile exists and contains the process ID of the running module.
+2. If click switching does not work, confirm the running module and `switch` command use the same socket path.
 3. If switching works but an application keeps using the old input source, check that application's input-source configuration or restart the application.
 
 ## Contributing

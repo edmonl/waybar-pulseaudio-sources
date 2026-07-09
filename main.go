@@ -5,21 +5,26 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/edmonl/waybar-pulseaudio-sources/cli"
+	"github.com/edmonl/waybar-pulseaudio-sources/daemonutil/sockdgram"
 	"github.com/edmonl/waybar-pulseaudio-sources/pulse"
 	"github.com/edmonl/waybar-pulseaudio-sources/waybar"
 )
 
-const reconnectDelay = 10 * time.Minute
+const (
+	switchCommand          = "switch"
+	controlMaxDatagramSize = 8
+	controlSendTimeout     = 250 * time.Millisecond
+	reconnectDelay         = 10 * time.Minute
+)
 
 func main() {
 	log.SetFlags(0)
@@ -33,7 +38,7 @@ func main() {
 		log.Fatal(err)
 	}
 	if command.SwitchSource {
-		if err := switchSource(command.Pidfile); err != nil {
+		if err := switchSource(command.Sock); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -53,29 +58,27 @@ func run(ctx context.Context, command cli.Command) error {
 		return err
 	}
 
-	if command.Pidfile != "" {
-		removePIDFile, err := writePIDFile(command.Pidfile)
+	var controlRequests <-chan struct{}
+	if command.Sock != "" {
+		controlSocket, err := sockdgram.Listen(command.Sock, controlMaxDatagramSize)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
-		defer removePIDFile()
+		defer controlSocket.Close()
+		controlRequests = readControlRequests(controlSocket)
 	}
 
 	output := newJSONWriter(os.Stdout)
 
-	userSignal := make(chan os.Signal, 1)
-	signal.Notify(userSignal, syscall.SIGUSR1)
-	defer signal.Stop(userSignal)
-
 	pendingCycle := false
 	for {
 		var err error
-		pendingCycle, err = runPulse(ctx, output, userSignal, pendingCycle, formatter)
+		pendingCycle, err = runPulse(ctx, output, controlRequests, pendingCycle, formatter)
 		if err != nil {
 			return err
 		}
 
-		cycleRequested, err := waitForReconnect(ctx, userSignal)
+		cycleRequested, err := waitForReconnect(ctx, controlRequests)
 		if err != nil {
 			return err
 		}
@@ -84,7 +87,7 @@ func run(ctx context.Context, command cli.Command) error {
 	}
 }
 
-func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Signal, pendingCycle bool, formatter *waybar.Formatter) (bool, error) {
+func runPulse(ctx context.Context, output *jsonWriter, controlRequests <-chan struct{}, pendingCycle bool, formatter *waybar.Formatter) (bool, error) {
 	client, err := pulse.NewClient(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -142,7 +145,7 @@ func runPulse(ctx context.Context, output *jsonWriter, userSignal <-chan os.Sign
 				return pendingCycle, err
 			}
 			return pendingCycle, output.Emit(formatter.Unavailable(err))
-		case <-userSignal:
+		case <-controlRequests:
 			pendingCycle = true
 		case <-changes:
 		}
@@ -207,80 +210,52 @@ func watchPulse(client *pulse.Client) (<-chan struct{}, <-chan error, func()) {
 	return changes, waitErrors, stopWatching
 }
 
-func waitForReconnect(ctx context.Context, userSignal <-chan os.Signal) (bool, error) {
+func waitForReconnect(ctx context.Context, controlRequests <-chan struct{}) (bool, error) {
 	timer := time.NewTimer(reconnectDelay)
 	defer timer.Stop()
 
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
-	case <-userSignal:
+	case <-controlRequests:
 		return true, nil
 	case <-timer.C:
 		return false, nil
 	}
 }
 
-func switchSource(pidfile string) error {
-	content, err := os.ReadFile(pidfile)
-	if err != nil {
-		return fmt.Errorf("failed to read pidfile: %w", err)
-	}
-
-	pidText := strings.TrimSpace(string(content))
-	pid, err := strconv.Atoi(pidText)
-	if err != nil || pid <= 0 {
-		return fmt.Errorf("invalid process ID %v in pidfile", pidText)
-	}
-
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("failed to find process %v: %w", pid, err)
-	}
-	if err := process.Signal(syscall.SIGUSR1); err != nil {
-		return fmt.Errorf("failed to signal process %v: %w", pid, err)
-	}
-
-	return nil
+func readControlRequests(socket *sockdgram.Socket) <-chan struct{} {
+	requests := make(chan struct{}, 1)
+	go func() {
+		// Do not close requests here. It would probably be harmless in the
+		// current shutdown path because run is already returning, but it is
+		// unnecessary and fragile: receivers use one-value receives, so a closed
+		// channel would look like an endless stream of requests if the lifecycle
+		// changes.
+		for {
+			packet, err := socket.ReadString()
+			if err != nil {
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+				log.Printf("failed to read command from socket: %v", err)
+				continue
+			}
+			if packet != switchCommand {
+				continue
+			}
+			select {
+			case requests <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	return requests
 }
 
-func writePIDFile(path string) (func(), error) {
-	if err := checkReusablePIDFile(path); err != nil {
-		return nil, err
+func switchSource(sock string) error {
+	if err := sockdgram.SendString(sock, switchCommand, controlSendTimeout); err != nil {
+		return fmt.Errorf("failed to send switch command: %w", err)
 	}
-	pid := strconv.Itoa(os.Getpid())
-	if err := os.WriteFile(path, []byte(pid+"\n"), 0o644); err != nil {
-		return nil, fmt.Errorf("failed to write pidfile %v: %w", path, err)
-	}
-
-	return func() {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return
-		}
-		if strings.TrimSpace(string(content)) == pid {
-			os.Remove(path)
-		}
-	}, nil
-}
-
-func checkReusablePIDFile(path string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("failed to read pidfile %v: %w", path, err)
-	}
-
-	pid, err := strconv.Atoi(strings.TrimSpace(string(content)))
-	if err != nil || pid <= 0 {
-		return nil
-	}
-
-	if err := syscall.Kill(pid, 0); err == nil || errors.Is(err, syscall.EPERM) {
-		return fmt.Errorf("pidfile %v is already used by process %v", path, pid)
-	}
-
 	return nil
 }

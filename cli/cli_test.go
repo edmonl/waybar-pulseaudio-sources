@@ -6,7 +6,8 @@ import (
 )
 
 func TestParseDefaultCommand(t *testing.T) {
-	t.Setenv("XDG_RUNTIME_DIR", "/tmp/runtime-test")
+	runtimeDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 
 	command, err := Parse("waybar-pulseaudio-sources", nil)
 	if err != nil {
@@ -16,8 +17,8 @@ func TestParseDefaultCommand(t *testing.T) {
 	if command.SwitchSource {
 		t.Fatal("SwitchSource = true, want false")
 	}
-	if command.Pidfile != "/tmp/runtime-test/waybar-pulseaudio-sources.pid" {
-		t.Fatalf("Pidfile = %q", command.Pidfile)
+	if command.Sock != filepath.Join(runtimeDir, "waybar-pulseaudio-sources.sock") {
+		t.Fatalf("Sock = %q", command.Sock)
 	}
 	if command.Text == "" || command.Class == "" || command.Tooltip == "" {
 		t.Fatalf("default templates must not be empty: %#v", command)
@@ -25,7 +26,8 @@ func TestParseDefaultCommand(t *testing.T) {
 }
 
 func TestParseSwitchCommand(t *testing.T) {
-	t.Setenv("XDG_RUNTIME_DIR", "/tmp/runtime-test")
+	runtimeDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 
 	command, err := Parse("waybar-pulseaudio-sources", []string{"switch"})
 	if err != nil {
@@ -35,39 +37,39 @@ func TestParseSwitchCommand(t *testing.T) {
 	if !command.SwitchSource {
 		t.Fatal("SwitchSource = false, want true")
 	}
-	if command.Pidfile != "/tmp/runtime-test/waybar-pulseaudio-sources.pid" {
-		t.Fatalf("Pidfile = %q", command.Pidfile)
+	if command.Sock != filepath.Join(runtimeDir, "waybar-pulseaudio-sources.sock") {
+		t.Fatalf("Sock = %q", command.Sock)
 	}
 }
 
-func TestParseSwitchCommandRejectsEmptyPIDFile(t *testing.T) {
-	_, err := Parse("waybar-pulseaudio-sources", []string{"switch", "--pidfile", ""})
+func TestParseSwitchCommandRejectsEmptySocket(t *testing.T) {
+	_, err := Parse("waybar-pulseaudio-sources", []string{"switch", "--sock", ""})
 	if err == nil {
-		t.Fatal("Parse returned nil error, want empty pidfile error")
+		t.Fatal("Parse returned nil error, want empty socket error")
 	}
 }
 
-func TestParseDefaultCommandAllowsEmptyPIDFile(t *testing.T) {
-	command, err := Parse("waybar-pulseaudio-sources", []string{"--pidfile", ""})
+func TestParseDefaultCommandAllowsEmptySocket(t *testing.T) {
+	command, err := Parse("waybar-pulseaudio-sources", []string{"--sock", ""})
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	if command.Pidfile != "" {
-		t.Fatalf("Pidfile = %q, want empty", command.Pidfile)
+	if command.Sock != "" {
+		t.Fatalf("Sock = %q, want empty", command.Sock)
 	}
 }
 
-func TestParseResolvesRelativePIDFile(t *testing.T) {
-	command, err := Parse("waybar-pulseaudio-sources", []string{"--pidfile", "module.pid"})
+func TestParseResolvesRelativeSocket(t *testing.T) {
+	command, err := Parse("waybar-pulseaudio-sources", []string{"--sock", "module.sock"})
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
 
-	want, err := filepath.Abs("module.pid")
+	want, err := filepath.Abs("module.sock")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if command.Pidfile != want {
-		t.Fatalf("Pidfile = %q, want %q", command.Pidfile, want)
+	if command.Sock != want {
+		t.Fatalf("Sock = %q, want %q", command.Sock, want)
 	}
 }
