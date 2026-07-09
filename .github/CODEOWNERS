@@ -1,0 +1,5 @@
+# Default code owner for the repository.
+* @edmonl
+
+# Require code owner review for ownership rule changes too.
+/.github/CODEOWNERS @edmonl
